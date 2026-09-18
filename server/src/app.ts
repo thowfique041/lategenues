@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
+import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { api } from './routes.js';
 
@@ -14,7 +15,7 @@ app.use(morgan(process.env.NODE_ENV === 'test' ? 'tiny' : 'dev'));
 app.use('/uploads', express.static(path.resolve('uploads')));
 app.use('/api', api);
 if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.resolve('client/dist');
+  const clientDist = [path.resolve('client/dist'), path.resolve('../client/dist')].find(existsSync) || path.resolve('client/dist');
   app.use(express.static(clientDist));
   app.get('/{*splat}', (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
 }
