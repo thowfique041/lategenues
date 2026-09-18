@@ -54,6 +54,11 @@ api.get('/content', async (req, res) => {
   if (req.query.course) query.course = req.query.course;
   res.json(await Content.find(query).populate('course', 'title').populate('teacher', 'name').sort({ startsAt: 1, createdAt: -1 }));
 });
+api.get('/content/:id', requireAuth, async (req, res) => {
+  const item = await Content.findById(req.params.id).populate('course', 'title').populate('teacher', 'name');
+  if (!item) return res.status(404).json({ message: 'Content not found' });
+  res.json(item);
+});
 api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Content.create({ ...req.body, teacher: req.user.id })));
 api.patch('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Content.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => { await Content.findByIdAndDelete(req.params.id); res.status(204).end(); });
