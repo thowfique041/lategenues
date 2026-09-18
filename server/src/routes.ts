@@ -63,7 +63,10 @@ api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) =>
 api.patch('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Content.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => { await Content.findByIdAndDelete(req.params.id); res.status(204).end(); });
 
-api.get('/exams', requireAuth, async (_req, res) => res.json(await Exam.find({ published: true }).populate('course', 'title')));
+api.get('/exams', requireAuth, async (req, res) => {
+  const projection = req.user.role === 'student' ? '-questions.answer' : '';
+  res.json(await Exam.find({ published: true }).select(projection).populate('course', 'title'));
+});
 api.post('/exams', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Exam.create(req.body)));
 api.patch('/exams/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Exam.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 
@@ -129,8 +132,8 @@ const resources: Record<string, { model: any; write: string[] }> = {
 Object.entries(resources).forEach(([name, resource]) => {
   api.get(`/${name}`, requireAuth, async (req, res) => {
     const query: any = {};
-    if (name === 'attendance' && req.user.role === 'student') query.student = req.user.id;
-    if (name === 'payments' && req.user.role === 'student') query.student = req.user.id;
+    const subjectStudent = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
+    if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
     if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
     res.json(await resource.model.find(query).sort({ createdAt: -1 }));
   });
