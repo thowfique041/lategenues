@@ -61,9 +61,10 @@ api.post('/auth/forgot-password', async (req, res) => {
 api.get('/courses', optionalAuth, async (req, res) => {
   const query: any = req.query.all === 'true' && ['admin', 'teacher'].includes(req.user?.role) ? {} : { published: true };
   const enrolled = req.user && ['student', 'guardian'].includes(req.user.role) ? (await enrolledCourseIds(req.user)).map(String) : [];
+  const pending = req.user?.role === 'student' ? (await Payment.find({ student: req.user.id, status: 'pending' }).distinct('course')).map(String) : [];
   if (req.query.mine === 'true') query._id = { $in: enrolled };
   const courses = await Course.find(query).populate('instructor', 'name avatar').sort({ featured: -1, createdAt: -1 });
-  res.json(courses.map((course) => ({ ...course.toObject(), enrolled: enrolled.includes(course.id) })));
+  res.json(courses.map((course) => ({ ...course.toObject(), enrolled: enrolled.includes(course.id), paymentStatus: pending.includes(course.id) ? 'pending' : undefined })));
 });
 api.post('/courses', requireAuth, allow('admin'), validate(courseSchema), async (req, res) => res.status(201).json(await Course.create(req.body)));
 api.patch('/courses/:id', requireAuth, allow('admin'), async (req, res) => res.json(await Course.findByIdAndUpdate(req.params.id, req.body, { new: true })));
@@ -185,7 +186,9 @@ Object.entries(resources).forEach(([name, resource]) => {
     if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
     if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
     if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
-    res.json(await resource.model.find(query).sort({ createdAt: -1 }));
+    let cursor = resource.model.find(query).sort({ createdAt: -1 });
+    if (name === 'payments') cursor = cursor.populate('student', 'name email phone').populate('course', 'title price');
+    res.json(await cursor);
   });
   api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => res.status(201).json(await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) })));
   api.patch(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => {
