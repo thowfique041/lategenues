@@ -5,9 +5,10 @@
   "workspaces": ["client", "server"],
   "scripts": {
     "dev": "concurrently -n API,WEB -c cyan,magenta \"npm run dev -w server\" \"npm run dev -w client\"",
-    "build": "npm run build -w client",
+    "build": "pnpm --filter lategenues-server build && pnpm --filter lategenues-client build",
+    "typecheck": "pnpm --filter lategenues-server typecheck && pnpm --filter lategenues-client typecheck",
     "start": "npm run start -w server",
-    "seed": "npm run seed -w server"
+    "seed": "pnpm --filter lategenues-server seed"
   },
   "devDependencies": { "concurrently": "^9.1.2" }
 }

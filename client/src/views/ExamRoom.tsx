@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 
 export function ExamRoom() {
-  const { id }=useParams(); const [data,setData]=useState(null); const [index,setIndex]=useState(0); const [answers,setAnswers]=useState({}); const [seconds,setSeconds]=useState(0); const [result,setResult]=useState(null); const [error,setError]=useState('');
+  const { id }=useParams(); const [data,setData]=useState<any>(null); const [index,setIndex]=useState(0); const [answers,setAnswers]=useState<Record<string,{value?:string|number;marked?:boolean}>>({}); const [seconds,setSeconds]=useState(0); const [result,setResult]=useState<any>(null); const [error,setError]=useState('');
   useEffect(()=>{api(`/exams/${id}/start`,{method:'POST'}).then(x=>{setData(x);setSeconds(x.exam.duration*60)}).catch(e=>setError(e.message));},[id]);
   useEffect(()=>{if(!seconds||result)return;const timer=setInterval(()=>setSeconds(s=>s<=1?(submit(),0):s-1),1000);return()=>clearInterval(timer);},[seconds,result]);
   const formatted=useMemo(()=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`,[seconds]);

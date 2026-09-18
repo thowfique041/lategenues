@@ -1,6 +1,6 @@
 # LateGenues
 
-A full-stack coaching management and online learning platform for classes 6–12 and admission candidates.
+A full-stack TypeScript MERN coaching management and online learning platform for classes 6–12 and admission candidates.
 
 ## Included modules
 
@@ -13,6 +13,7 @@ A full-stack coaching management and online learning platform for classes 6–12
 - Admin-manageable website settings and global learning-content search
 - JWT authentication and MongoDB data models
 - Responsive, accessible React interface
+- End-to-end TypeScript (`.ts`/`.tsx`) with compiler checks for both API and frontend
 
 ## Run locally
 

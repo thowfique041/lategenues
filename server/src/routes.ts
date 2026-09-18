@@ -49,7 +49,7 @@ api.patch('/courses/:id', requireAuth, allow('admin'), async (req, res) => res.j
 api.delete('/courses/:id', requireAuth, allow('admin'), async (req, res) => { await Course.findByIdAndDelete(req.params.id); res.status(204).end(); });
 
 api.get('/content', async (req, res) => {
-  const query = { published: true };
+  const query: any = { published: true };
   if (req.query.type) query.type = req.query.type;
   if (req.query.course) query.course = req.query.course;
   res.json(await Content.find(query).populate('course', 'title').populate('teacher', 'name').sort({ startsAt: 1, createdAt: -1 }));
@@ -117,7 +117,7 @@ api.get('/complaints', requireAuth, async (req, res) => {
 api.post('/complaints', requireAuth, allow('guardian', 'student'), async (req, res) => res.status(201).json(await Complaint.create({ ...req.body, author: req.user.id })));
 api.patch('/complaints/:id', requireAuth, allow('admin'), async (req, res) => res.json(await Complaint.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 
-const resources = {
+const resources: Record<string, { model: any; write: string[] }> = {
   batches: { model: Batch, write: ['admin'] },
   enrollments: { model: Enrollment, write: ['admin'] },
   routines: { model: Routine, write: ['admin', 'teacher'] },
@@ -128,7 +128,7 @@ const resources = {
 };
 Object.entries(resources).forEach(([name, resource]) => {
   api.get(`/${name}`, requireAuth, async (req, res) => {
-    const query = {};
+    const query: any = {};
     if (name === 'attendance' && req.user.role === 'student') query.student = req.user.id;
     if (name === 'payments' && req.user.role === 'student') query.student = req.user.id;
     if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
@@ -172,7 +172,7 @@ api.get('/dashboard', requireAuth, async (req, res) => {
     Course.countDocuments(), Batch.countDocuments({ active: true }), Content.countDocuments({ type: { $in: ['live-class', 'recording'] } }), Exam.countDocuments(),
     Complaint.countDocuments({ status: { $ne: 'resolved' } }),
   ]);
-  const response = { students, teachers, guardians, courses, batches, classes, exams, pending, role: req.user.role };
+  const response: any = { students, teachers, guardians, courses, batches, classes, exams, pending, role: req.user.role };
   if (['student', 'guardian'].includes(req.user.role)) {
     const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
     const [results, attendanceRows, enrollments, upcoming] = await Promise.all([

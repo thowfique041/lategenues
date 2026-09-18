@@ -3,7 +3,7 @@ services:
     name: lategenues-api
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter lategenues-server build
     startCommand: pnpm --filter lategenues-server start
     healthCheckPath: /api/health
     envVars:

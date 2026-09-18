@@ -1,7 +1,8 @@
 import { ArrowRight, Award, BookOpen, CheckCircle2, ClipboardCheck, GraduationCap, Laptop, MessageCircleQuestion, PlayCircle, Sparkles, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import type { LucideIcon } from 'lucide-react';
 
-const features = [
+const features: [LucideIcon,string,string][] = [
   [PlayCircle, 'Live & recorded classes', 'Learn live or revisit every lesson at your own pace.'],
   [BookOpen, 'Digital materials', 'Lecture sheets, notebooks and course books in one place.'],
   [ClipboardCheck, 'Online exams', 'Timed model tests with instant results and progress insights.'],

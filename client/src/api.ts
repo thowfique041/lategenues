@@ -1,6 +1,6 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-export async function api(path, options = {}) {
+export async function api(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem('lg_token');
   const response = await fetch(`${BASE}${path}`, {
     ...options,
@@ -11,7 +11,7 @@ export async function api(path, options = {}) {
   return data;
 }
 
-export async function uploadFile(file) {
+export async function uploadFile(file: File) {
   const body = new FormData(); body.append('file', file);
   const response = await fetch(`${BASE}/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('lg_token')}` }, body });
   const data = await response.json().catch(() => ({}));
