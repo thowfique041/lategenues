@@ -3,7 +3,7 @@ services:
     name: lategenues-api
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter lategenues-server build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter lategenues-client build && pnpm --filter lategenues-server build
     startCommand: pnpm --filter lategenues-server start
     healthCheckPath: /api/health
     envVars:
@@ -13,5 +13,3 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: CLIENT_URL
-        sync: false
