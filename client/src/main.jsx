@@ -8,6 +8,9 @@ import { Login } from './views/Login';
 import { Courses } from './views/Courses';
 import { Dashboard } from './views/Dashboard';
 import { ModulePage } from './views/ModulePage';
+import { PublicPage } from './views/PublicPage';
+import { ExamRoom } from './views/ExamRoom';
+import { Notebook } from './views/Notebook';
 import './styles.css';
 
 function Protected({ children }) {
@@ -20,9 +23,19 @@ function App() {
     <Route element={<Layout />}>
       <Route index element={<Home />} />
       <Route path="courses" element={<Courses />} />
+      <Route path="class/:level" element={<PublicPage type="class" />} />
+      <Route path="admission" element={<PublicPage type="admission" />} />
+      <Route path="teachers" element={<PublicPage type="teachers" />} />
+      <Route path="books" element={<PublicPage type="books" />} />
+      <Route path="notices" element={<PublicPage type="notices" />} />
+      <Route path="about" element={<PublicPage type="about" />} />
+      <Route path="contact" element={<PublicPage type="contact" />} />
+      <Route path="faq" element={<PublicPage type="faq" />} />
       <Route path="login" element={<Login />} />
       <Route path="dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="dashboard/:module" element={<Protected><ModulePage /></Protected>} />
+      <Route path="exam/:id" element={<Protected><ExamRoom /></Protected>} />
+      <Route path="notebook/:id" element={<Protected><Notebook /></Protected>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Route>
   </Routes></AuthProvider>;

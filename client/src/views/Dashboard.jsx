@@ -5,10 +5,10 @@ import { api } from '../api';
 import { useAuth } from '../auth-context';
 
 const roleMenus = {
-  admin: [['courses','Courses',BookOpen],['users','Students & teachers',Users],['classes','Classes',PlayCircle],['exams','Exams',ClipboardCheck],['complaints','Complaints',MessageSquareWarning],['notices','Notices',FileText]],
-  teacher: [['courses','My courses',BookOpen],['classes','Classes',PlayCircle],['materials','Materials',FileText],['exams','Exams',ClipboardCheck],['qa','Student Q&A',CircleHelp],['attendance','Attendance',CheckCircle2]],
-  student: [['courses','My courses',BookOpen],['classes','Live & recorded',PlayCircle],['materials','Materials & books',FileText],['exams','Online exams',ClipboardCheck],['qa','Teacher Q&A',CircleHelp],['results','Results',TrendingUp]],
-  guardian: [['progress','Student progress',TrendingUp],['attendance','Attendance',CheckCircle2],['results','Results',ClipboardCheck],['routine','Class routine',CalendarDays],['complaints','Complaints',MessageSquareWarning],['notices','Notices',FileText]],
+  admin: [['courses','Courses',BookOpen],['users','Students & teachers',Users],['classes','Classes',PlayCircle],['routines','Batches & routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['attendance','Attendance',CheckCircle2],['complaints','Complaints',MessageSquareWarning],['payments','Payments',FileText],['notifications','Notifications',FileText],['settings','Website content',FileText]],
+  teacher: [['courses','My courses',BookOpen],['classes','Classes',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['qa','Student Q&A',CircleHelp],['attendance','Attendance',CheckCircle2],['notifications','Notifications',FileText]],
+  student: [['courses','My courses',BookOpen],['classes','Live & recorded',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Online exams',ClipboardCheck],['qa','Teacher Q&A',CircleHelp],['results','Results',TrendingUp],['attendance','Attendance',CheckCircle2],['payments','Payments',FileText],['notifications','Notifications',FileText]],
+  guardian: [['progress','Student progress',TrendingUp],['attendance','Attendance',CheckCircle2],['results','Results',ClipboardCheck],['routine','Class routine',CalendarDays],['payments','Payments',FileText],['complaints','Complaints',MessageSquareWarning],['notices','Notices',FileText],['notifications','Notifications',FileText]],
 };
 
 export function Dashboard() {

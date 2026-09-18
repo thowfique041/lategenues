@@ -8,6 +8,9 @@ A full-stack coaching management and online learning platform for classes 6–12
 - Role-based Admin, Teacher, Student and Guardian dashboards
 - Courses, batches, live/recorded classes, materials and PDF books
 - Exams, results, attendance, Q&A, complaints and notices
+- Batches, enrollment, routines, live notebooks, notifications and payments
+- Timed exam-taking, objective scoring and student/guardian analytics
+- Admin-manageable website settings and global learning-content search
 - JWT authentication and MongoDB data models
 - Responsive, accessible React interface
 
@@ -35,3 +38,5 @@ All demo accounts use password `Demo@123`.
 - API: Render
 - Database: MongoDB Atlas M0
 - Media/PDF: Cloudinary free tier or external video links
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the SRS coverage map and the small set of provider-dependent integrations that require owner accounts.

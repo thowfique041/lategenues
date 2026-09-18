@@ -1,15 +1,38 @@
-import { ArrowLeft, BookOpen, CalendarDays, CirclePlus, FileText, PlayCircle, Search } from 'lucide-react';
+import { ArrowLeft, BookOpen, CalendarDays, CirclePlus, FileText, PlayCircle, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { api } from '../api';
+import { useAuth } from '../auth-context';
 
-const names = { courses:'Courses',users:'Students & teachers',classes:'Classes',materials:'Materials & books',exams:'Online exams',qa:'Teacher Q&A',results:'Results & analytics',complaints:'Complaints',notices:'Notices',attendance:'Attendance',progress:'Student progress',routine:'Class routine' };
-const samples = [
-  { title:'SSC 2027 Complete Science',meta:'Class 10 · 4 subjects',status:'Active',icon:BookOpen },
-  { title:"Newton's Laws: Problem Solving",meta:'Physics · Tomorrow, 8:00 PM',status:'Upcoming',icon:PlayCircle },
-  { title:'Weekly Physics Model Test',meta:'20 questions · 30 minutes',status:'Published',icon:FileText },
-  { title:'Physics Chapter 3 Lecture Sheet',meta:'PDF · Updated today',status:'Available',icon:FileText },
-];
+const config = {
+  courses:{name:'Courses',endpoint:'/courses?all=true',write:'/courses',fields:[['title','Course name'],['slug','Slug'],['summary','Description'],['classLevel','Class'],['category','Category'],['price','Price','number']]},
+  users:{name:'Students & teachers',endpoint:'/users',write:'/users',fields:[['name','Full name'],['email','Email','email'],['password','Temporary password','password'],['role','Role'],['phone','Phone'],['classLevel','Class'],['studentId','Student ID']]},
+  classes:{name:'Live & recorded classes',endpoint:'/content',write:'/content',fields:[['title','Class title'],['type','Type'],['subject','Subject'],['chapter','Chapter'],['url','Meeting/video URL'],['startsAt','Start date','datetime-local'],['duration','Duration (minutes)','number']]},
+  materials:{name:'Materials & books',endpoint:'/content?type=material',write:'/content',defaults:{type:'material'},fields:[['title','Title'],['type','Type'],['subject','Subject'],['chapter','Chapter'],['url','File URL'],['fileType','File type']]},
+  exams:{name:'Online exams',endpoint:'/exams',write:'/exams',fields:[['title','Exam title'],['subject','Subject'],['duration','Duration (minutes)','number'],['totalMarks','Total marks','number'],['passMarks','Pass marks','number'],['negativeMarking','Negative mark','number'],['questionsJson','Questions JSON — prompt, options, answer, marks']]},
+  qa:{name:'Teacher Q&A',endpoint:'/qa',write:'/qa',fields:[['question','Your question'],['subject','Subject'],['chapter','Chapter'],['attachment','Attachment URL']]},
+  complaints:{name:'Complaints',endpoint:'/complaints',write:'/complaints',fields:[['subject','Subject'],['category','Category'],['message','Message']]},
+  notices:{name:'Notices',endpoint:'/content?type=notice',write:'/content',defaults:{type:'notice'},fields:[['title','Notice title'],['description','Details']]},
+  attendance:{name:'Attendance',endpoint:'/attendance',write:'/attendance',fields:[['student','Student ID'],['date','Date','date'],['status','Status']]},
+  routines:{name:'Class routine',endpoint:'/routines',write:'/routines',fields:[['day','Day'],['subject','Subject'],['startsAt','Start time','time'],['endsAt','End time','time'],['type','Type']]},
+  routine:{name:'Class routine',endpoint:'/routines',write:'/routines',fields:[]},
+  notebooks:{name:'Live notebooks',endpoint:'/notebooks',write:'/notebooks',fields:[['title','Notebook title'],['subject','Subject'],['chapter','Chapter'],['content','Initial notes']]},
+  results:{name:'Results & analytics',endpoint:'/results',fields:[]},
+  progress:{name:'Student progress',endpoint:'/analytics/me',single:true,fields:[]},
+  payments:{name:'Payments & subscriptions',endpoint:'/payments',write:'/payments',fields:[['student','Student ID'],['course','Course ID'],['amount','Amount','number'],['method','Method'],['transactionId','Transaction ID'],['status','Status']]},
+  notifications:{name:'Notifications',endpoint:'/notifications',write:'/notifications',fields:[['title','Title'],['message','Message'],['role','Target role'],['url','Link']]},
+  settings:{name:'Website content',endpoint:'/settings',write:'/settings',fields:[['key','Setting key'],['value','Value']]},
+};
 
-export function ModulePage() {
-  const { module } = useParams(); const name = names[module] || 'Workspace';
-  return <section className="module-page"><div className="container"><Link className="back" to="/dashboard"><ArrowLeft/> Dashboard</Link><div className="module-head"><div><span className="kicker">MANAGE & EXPLORE</span><h1>{name}</h1><p>Everything you need, organized in one focused workspace.</p></div><button className="btn"><CirclePlus/> Add new</button></div><div className="module-toolbar"><label className="search"><Search/><input placeholder={`Search ${name.toLowerCase()}`}/></label><button><CalendarDays/> Filter</button></div><div className="data-list">{samples.map(({title,meta,status,icon:Icon})=><article key={title}><div className="data-icon"><Icon/></div><div><b>{title}</b><span>{meta}</span></div><i>{status}</i><button>Open</button></article>)}</div></div></section>;
+export function ModulePage(){
+  const{module}=useParams();const{user}=useAuth();const c=config[module]||config.courses;const[items,setItems]=useState([]);const[search,setSearch]=useState('');const[show,setShow]=useState(false);const[form,setForm]=useState(c.defaults||{});const[error,setError]=useState('');const[loading,setLoading]=useState(true);
+  const canWrite=user.role==='admin'||(user.role==='teacher'&&['classes','materials','exams','attendance','routines','notebooks','notifications'].includes(module))||(user.role==='student'&&['qa','complaints'].includes(module))||(user.role==='guardian'&&module==='complaints');
+  async function load(){setLoading(true);setError('');try{const data=await api(c.endpoint);setItems(Array.isArray(data)?data:[data]);}catch(e){setError(e.message)}finally{setLoading(false)}}useEffect(()=>{setForm(c.defaults||{});load()},[module]);
+  async function create(e){e.preventDefault();try{const payload={...form};if(module==='exams'&&payload.questionsJson){payload.questions=JSON.parse(payload.questionsJson);delete payload.questionsJson}if(module==='settings'){await api(`/settings/${form.key}`,{method:'PUT',body:JSON.stringify({value:form.value})})}else await api(c.write,{method:'POST',body:JSON.stringify(payload)});setShow(false);setForm(c.defaults||{});load()}catch(e){setError(e.message)}}
+  async function remove(id){if(!confirm('Remove this item?'))return;await api(`${c.write}/${id}`,{method:'DELETE'});load()}
+  const shown=useMemo(()=>items.filter(x=>JSON.stringify(x).toLowerCase().includes(search.toLowerCase())),[items,search]);
+  return <section className="module-page"><div className="container"><Link className="back" to="/dashboard"><ArrowLeft/> Dashboard</Link><div className="module-head"><div><span className="kicker">{user.role.toUpperCase()} WORKSPACE</span><h1>{c.name}</h1><p>Real data from your LateGenues workspace.</p></div>{canWrite&&c.write&&<button className="btn" onClick={()=>setShow(true)}><CirclePlus/> Add new</button>}</div><div className="module-toolbar"><label className="search"><Search/><input placeholder={`Search ${c.name.toLowerCase()}`} value={search} onChange={e=>setSearch(e.target.value)}/></label><button onClick={load}><CalendarDays/> Refresh</button></div>{error&&<div className="error">{error}</div>}{loading?<div className="empty-card">Loading…</div>:shown.length?<div className="data-list">{shown.map((item,i)=><ResourceRow key={item._id||i} item={item} module={module} canWrite={canWrite} remove={remove}/>)}</div>:<div className="empty-card"><BookOpen/><h3>No {c.name.toLowerCase()} yet</h3><p>Use “Add new” to create the first one, or check back later.</p></div>}
+  {show&&<div className="modal-backdrop"><form className="resource-form" onSubmit={create}><button type="button" className="modal-close" onClick={()=>setShow(false)}><X/></button><span className="kicker">CREATE NEW</span><h2>Add {c.name}</h2>{c.fields.map(([key,label,type='text'])=><label key={key}>{label}{['summary','message','description','content','questionsJson'].includes(key)?<textarea placeholder={key==='questionsJson'?'[{"prompt":"Question?","options":["A","B"],"answer":0,"marks":1}]':''} required={key==='message'} value={form[key]||''} onChange={e=>setForm({...form,[key]:e.target.value})}/>:<input type={type} required={['title','name','email','question','subject'].includes(key)} value={form[key]||''} onChange={e=>setForm({...form,[key]:type==='number'?Number(e.target.value):e.target.value})}/>}</label>)}<button className="btn wide">Save</button></form></div>}</div></section>;
 }
+
+function ResourceRow({item,module,canWrite,remove}){const title=item.title||item.name||item.subject||item.question||item.exam?.title||item.key||`${module} record`;const meta=item.summary||item.description||item.message||item.email||item.subject||item.status||item.value||item.day||`${item.score??''} ${item.percentage!=null?`· ${item.percentage}%`:''}`;const Icon=module==='classes'?PlayCircle:module==='courses'?BookOpen:FileText;return <article><div className="data-icon"><Icon/></div><div><b>{title}</b><span>{typeof meta==='object'?JSON.stringify(meta):meta}</span></div><i>{item.status||item.type||'Active'}</i><div className="row-actions">{module==='exams'&&<Link to={`/exam/${item._id}`}>Start</Link>}{module==='notebooks'&&<Link to={`/notebook/${item._id}`}>Open</Link>}{item.url&&<a href={item.url} target="_blank" rel="noreferrer">Open</a>}{canWrite&&item._id&&<button className="danger" onClick={()=>remove(item._id)}><Trash2/></button>}</div></article>}

@@ -1,0 +1,17 @@
+import { ArrowLeft, Clock3, Flag, Send } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { api } from '../api';
+
+export function ExamRoom() {
+  const { id }=useParams(); const [data,setData]=useState(null); const [index,setIndex]=useState(0); const [answers,setAnswers]=useState({}); const [seconds,setSeconds]=useState(0); const [result,setResult]=useState(null); const [error,setError]=useState('');
+  useEffect(()=>{api(`/exams/${id}/start`,{method:'POST'}).then(x=>{setData(x);setSeconds(x.exam.duration*60)}).catch(e=>setError(e.message));},[id]);
+  useEffect(()=>{if(!seconds||result)return;const timer=setInterval(()=>setSeconds(s=>s<=1?(submit(),0):s-1),1000);return()=>clearInterval(timer);},[seconds,result]);
+  const formatted=useMemo(()=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`,[seconds]);
+  async function submit(){if(!data||result)return;const payload=Object.entries(answers).map(([question,value])=>({question,value:value.value,marked:value.marked}));setResult(await api(`/exams/${id}/submit`,{method:'POST',body:JSON.stringify({answers:payload})}));}
+  if(error)return <section className="module-page"><div className="container error">{error}</div></section>; if(!data)return <section className="module-page"><div className="container">Loading exam…</div></section>;
+  const q=data.exam.questions[index];
+  if(result)return <section className="module-page"><div className="container result-card"><CheckResult result={result}/><Link className="btn" to="/dashboard/results">View all results</Link></div></section>;
+  return <section className="exam-room"><header><Link to="/dashboard/exams"><ArrowLeft/> Exit</Link><div><b>{data.exam.title}</b><span>{index+1} of {data.exam.questions.length}</span></div><strong><Clock3/> {formatted}</strong></header><div className="exam-layout"><aside>{data.exam.questions.map((x,i)=><button onClick={()=>setIndex(i)} className={`${i===index?'active':''} ${answers[x._id]?.value!==undefined?'done':''}`} key={x._id}>{i+1}</button>)}</aside><main><span className="kicker">QUESTION {index+1} · {q.marks} MARK</span><h2>{q.prompt}</h2>{q.options?.length?<div className="answer-options">{q.options.map((option,i)=><label key={option}><input type="radio" name={q._id} checked={answers[q._id]?.value===i} onChange={()=>setAnswers({...answers,[q._id]:{...answers[q._id],value:i}})}/><span>{String.fromCharCode(65+i)}</span>{option}</label>)}</div>:<textarea className="answer-text" placeholder="Write your answer" value={answers[q._id]?.value||''} onChange={e=>setAnswers({...answers,[q._id]:{...answers[q._id],value:e.target.value}})}/>}<div className="exam-actions"><button onClick={()=>setAnswers({...answers,[q._id]:{...answers[q._id],marked:!answers[q._id]?.marked}})}><Flag/> Mark for review</button>{index<data.exam.questions.length-1?<button className="btn" onClick={()=>setIndex(index+1)}>Save & next</button>:<button className="btn" onClick={submit}><Send/> Submit exam</button>}</div></main></div></section>;
+}
+function CheckResult({result}){return <><span className="kicker">EXAM SUBMITTED</span><h1>{result.percentage}%</h1><h2>{result.percentage>=40?'Congratulations, you passed!':'Keep practising—you can improve.'}</h2><div className="result-stats"><span><b>{result.score}</b>Score</span><span><b>{result.correct}</b>Correct</span><span><b>{result.wrong}</b>Wrong</span><span><b>{result.unanswered}</b>Unanswered</span></div></>}

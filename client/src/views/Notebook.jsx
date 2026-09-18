@@ -1,0 +1,7 @@
+import { ArrowLeft, Eraser, Highlighter, Image, Save, Sigma, Type } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { api } from '../api';
+import { useAuth } from '../auth-context';
+
+export function Notebook(){const{id}=useParams();const{user}=useAuth();const[note,setNote]=useState(null);const[saved,setSaved]=useState(false);useEffect(()=>{api('/notebooks').then(all=>setNote(all.find(x=>x._id===id)||{_id:id,title:'Live notebook',content:''})).catch(()=>{});},[id]);async function save(){const updated=await api(`/notebooks/${id}`,{method:'PATCH',body:JSON.stringify({content:note.content,status:'saved'})});setNote(updated);setSaved(true);setTimeout(()=>setSaved(false),2000)}return <section className="notebook-page"><header><Link to="/dashboard/notebooks"><ArrowLeft/> Back</Link><div><b>{note?.title||'Loading…'}</b><span>{user.role==='student'?'View-only notebook':'Teacher editor'}</span></div>{user.role!=='student'&&<button className="btn" onClick={save}><Save/> {saved?'Saved':'Save'}</button>}</header><div className="notebook-tools"><button><Type/> Text</button><button><Sigma/> Equation</button><button><Image/> Image</button><button><Highlighter/> Highlight</button><button><Eraser/> Erase</button></div><textarea readOnly={user.role==='student'} value={note?.content||''} onChange={e=>setNote({...note,content:e.target.value})} placeholder="Write lesson notes, equations and examples here…"/></section>}
