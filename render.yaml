@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: lategenues-api
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm --filter lategenues-server start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        sync: false

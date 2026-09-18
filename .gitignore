@@ -5,3 +5,5 @@ dist
 npm-debug.log*
 coverage
 work
+uploads/*
+!uploads/.gitkeep

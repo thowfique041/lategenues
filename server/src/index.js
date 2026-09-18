@@ -1,24 +1,28 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
 import mongoose from 'mongoose';
-import morgan from 'morgan';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import { config } from './config.js';
-import { api } from './routes.js';
+import { app } from './app.js';
+import { Notebook, User } from './models.js';
 
-const app = express();
-app.use(helmet());
-app.use(cors({ origin: config.clientUrl, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
-app.use(morgan('dev'));
-app.use('/api', api);
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ message: err.message || 'Something went wrong' });
+const server = createServer(app);
+const io = new Server(server, { cors: { origin: config.clientUrl.split(',').map(x => x.trim()), credentials: true } });
+io.use(async (socket, next) => {
+  try { const payload = jwt.verify(socket.handshake.auth?.token, config.jwtSecret); socket.user = await User.findById(payload.sub); next(); }
+  catch { next(new Error('Authentication required')); }
+});
+io.on('connection', (socket) => {
+  socket.on('notebook:join', (id) => socket.join(`notebook:${id}`));
+  socket.on('notebook:update', async ({ id, content, drawing }) => {
+    if (!['admin', 'teacher'].includes(socket.user?.role)) return;
+    const note = await Notebook.findByIdAndUpdate(id, { content, drawing, status: 'live' }, { new: true });
+    if (note) io.to(`notebook:${id}`).emit('notebook:changed', { id, content: note.content, drawing: note.drawing, updatedAt: note.updatedAt });
+  });
 });
 
 mongoose.connect(config.mongoUri).then(() => {
-  app.listen(config.port, () => console.log(`LateGenues API running on :${config.port}`));
+  server.listen(config.port, () => console.log(`LateGenues API running on :${config.port}`));
 }).catch((error) => {
   console.error('Database connection failed:', error.message);
   process.exit(1);

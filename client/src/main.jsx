@@ -11,6 +11,7 @@ import { ModulePage } from './views/ModulePage';
 import { PublicPage } from './views/PublicPage';
 import { ExamRoom } from './views/ExamRoom';
 import { Notebook } from './views/Notebook';
+import { ExamBuilder } from './views/ExamBuilder';
 import './styles.css';
 
 function Protected({ children }) {
@@ -35,6 +36,7 @@ function App() {
       <Route path="dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="dashboard/:module" element={<Protected><ModulePage /></Protected>} />
       <Route path="exam/:id" element={<Protected><ExamRoom /></Protected>} />
+      <Route path="dashboard/exam-builder" element={<Protected><ExamBuilder /></Protected>} />
       <Route path="notebook/:id" element={<Protected><Notebook /></Protected>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Route>

@@ -1,13 +1,30 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
+import path from 'path';
+import crypto from 'crypto';
+import { z } from 'zod';
 import { allow, requireAuth, signToken } from './auth.js';
 import { Attendance, Batch, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, User } from './models.js';
 
 export const api = Router();
+const validate = (schema) => (req, res, next) => { const result = schema.safeParse(req.body); if (!result.success) return res.status(400).json({ message: result.error.issues[0]?.message || 'Invalid request' }); req.body = result.data; next(); };
+const loginSchema = z.object({ email: z.string().min(3), password: z.string().min(6) });
+const courseSchema = z.object({ title: z.string().min(2), slug: z.string().min(2).regex(/^[a-z0-9-]+$/), summary: z.string().optional(), category: z.enum(['academic','admission']).optional(), classLevel: z.string().optional(), subjects: z.array(z.string()).optional(), group: z.string().optional(), duration: z.string().optional(), instructor: z.string().optional(), price: z.number().nonnegative().optional(), thumbnail: z.string().optional(), featured: z.boolean().optional(), published: z.boolean().optional() });
+const userCreateSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['admin','teacher','student','guardian']), phone: z.string().optional(), classLevel: z.string().optional(), studentId: z.string().optional(), group: z.string().optional(), guardianOf: z.string().optional() });
+const upload = multer({
+  storage: multer.diskStorage({ destination: 'uploads', filename: (_req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`) }),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, /^(image\/(jpeg|png|webp|gif)|application\/pdf|video\/mp4|application\/(msword|vnd\.openxmlformats-officedocument\.|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.presentationml))/.test(file.mimetype)),
+});
 
 api.get('/health', (_req, res) => res.json({ ok: true, service: 'LateGenues API' }));
+api.post('/uploads', requireAuth, allow('admin', 'teacher', 'student'), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'A supported file is required' });
+  res.status(201).json({ url: `/uploads/${req.file.filename}`, name: req.file.originalname, type: req.file.mimetype, size: req.file.size });
+});
 
-api.post('/auth/login', async (req, res) => {
+api.post('/auth/login', validate(loginSchema), async (req, res) => {
   const identifier = String(req.body.email || '').trim();
   const user = await User.findOne({ $or: [{ email: identifier.toLowerCase() }, { phone: identifier }] }).select('+password');
   if (!user || !(await bcrypt.compare(req.body.password || '', user.password))) {
@@ -27,7 +44,7 @@ api.get('/courses', async (req, res) => {
   const query = req.query.all === 'true' ? {} : { published: true };
   res.json(await Course.find(query).populate('instructor', 'name avatar').sort({ featured: -1, createdAt: -1 }));
 });
-api.post('/courses', requireAuth, allow('admin'), async (req, res) => res.status(201).json(await Course.create(req.body)));
+api.post('/courses', requireAuth, allow('admin'), validate(courseSchema), async (req, res) => res.status(201).json(await Course.create(req.body)));
 api.patch('/courses/:id', requireAuth, allow('admin'), async (req, res) => res.json(await Course.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 api.delete('/courses/:id', requireAuth, allow('admin'), async (req, res) => { await Course.findByIdAndDelete(req.params.id); res.status(204).end(); });
 
@@ -150,11 +167,21 @@ api.get('/dashboard', requireAuth, async (req, res) => {
     Course.countDocuments(), Batch.countDocuments({ active: true }), Content.countDocuments({ type: { $in: ['live-class', 'recording'] } }), Exam.countDocuments(),
     Complaint.countDocuments({ status: { $ne: 'resolved' } }),
   ]);
-  res.json({ students, teachers, guardians, courses, batches, classes, exams, pending });
+  const response = { students, teachers, guardians, courses, batches, classes, exams, pending, role: req.user.role };
+  if (['student', 'guardian'].includes(req.user.role)) {
+    const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
+    const [results, attendanceRows, enrollments, upcoming] = await Promise.all([
+      ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student }),
+      Content.find({ type: 'live-class', startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
+    ]);
+    const present = attendanceRows.filter(x => x.status === 'present').length;
+    response.student = { courseProgress: enrollments.length ? Math.round(enrollments.reduce((s,x)=>s+x.progress,0)/enrollments.length) : 0, examsCompleted: results.length, attendance: attendanceRows.length ? Math.round((present/attendanceRows.length)*100) : 0, upcoming };
+  }
+  res.json(response);
 });
 
 api.get('/users', requireAuth, allow('admin'), async (req, res) => res.json(await User.find(req.query.role ? { role: req.query.role } : {}).sort({ createdAt: -1 })));
-api.post('/users', requireAuth, allow('admin'), async (req, res) => res.status(201).json(await User.create({ ...req.body, password: await bcrypt.hash(req.body.password, 12) })));
+api.post('/users', requireAuth, allow('admin'), validate(userCreateSchema), async (req, res) => res.status(201).json(await User.create({ ...req.body, password: await bcrypt.hash(req.body.password, 12) })));
 api.patch('/users/:id', requireAuth, allow('admin'), async (req, res) => {
   const body = { ...req.body }; if (body.password) body.password = await bcrypt.hash(body.password, 12);
   res.json(await User.findByIdAndUpdate(req.params.id, body, { new: true }));
