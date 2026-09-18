@@ -17,6 +17,17 @@ export async function requireAuth(req, res, next) {
   }
 }
 
+export async function optionalAuth(req, _res, next) {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+      const payload = jwt.verify(token, config.jwtSecret);
+      req.user = await User.findById(payload.sub);
+    }
+  } catch { req.user = null; }
+  next();
+}
+
 export const allow = (...roles) => (req, res, next) => roles.includes(req.user.role)
   ? next()
   : res.status(403).json({ message: 'You do not have permission for this action' });

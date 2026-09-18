@@ -12,6 +12,12 @@ export function AuthProvider({ children }) {
     localStorage.setItem('lg_user', JSON.stringify(result.user));
     setUser(result.user);
   };
+  const register = async (details) => {
+    const result = await api('/auth/register', { method: 'POST', body: JSON.stringify(details) });
+    localStorage.setItem('lg_token', result.token);
+    localStorage.setItem('lg_user', JSON.stringify(result.user));
+    setUser(result.user);
+  };
   const logout = () => { localStorage.removeItem('lg_token'); localStorage.removeItem('lg_user'); setUser(null); };
-  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, login, register, logout }}>{children}</AuthContext.Provider>;
 }

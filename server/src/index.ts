@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { app } from './app.js';
-import { Notebook, User } from './models.js';
+import { Enrollment, Notebook, User } from './models.js';
 
 const server = createServer(app);
 const io = new Server(server, { cors: { origin: config.clientUrl.split(',').map(x => x.trim()), credentials: true } });
@@ -13,7 +13,16 @@ io.use(async (socket, next) => {
   catch { next(new Error('Authentication required')); }
 });
 io.on('connection', (socket) => {
-  socket.on('notebook:join', (id) => socket.join(`notebook:${id}`));
+  socket.on('notebook:join', async (id) => {
+    const note = await Notebook.findById(id).select('course');
+    const user = (socket as any).user;
+    if (!note) return;
+    if (['student', 'guardian'].includes(user.role)) {
+      const student = user.role === 'guardian' ? user.guardianOf : user.id;
+      if (!await Enrollment.exists({ student, course: note.course, status: { $in: ['active', 'completed'] } })) return;
+    }
+    socket.join(`notebook:${id}`);
+  });
   socket.on('notebook:update', async ({ id, content, drawing }) => {
     if (!['admin', 'teacher'].includes((socket as any).user?.role)) return;
     const note = await Notebook.findByIdAndUpdate(id, { content, drawing, status: 'live' }, { new: true });

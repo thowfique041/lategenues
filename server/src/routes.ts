@@ -4,14 +4,18 @@ import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { allow, requireAuth, signToken } from './auth.js';
+import { allow, optionalAuth, requireAuth, signToken } from './auth.js';
 import { Attendance, Batch, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, User } from './models.js';
 
 export const api = Router();
 const validate = (schema) => (req, res, next) => { const result = schema.safeParse(req.body); if (!result.success) return res.status(400).json({ message: result.error.issues[0]?.message || 'Invalid request' }); req.body = result.data; next(); };
 const loginSchema = z.object({ email: z.string().min(3), password: z.string().min(6) });
+const registerSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), phone: z.string().optional(), classLevel: z.string().optional(), group: z.string().optional() });
 const courseSchema = z.object({ title: z.string().min(2), slug: z.string().min(2).regex(/^[a-z0-9-]+$/), summary: z.string().optional(), category: z.enum(['academic','admission']).optional(), classLevel: z.string().optional(), subjects: z.array(z.string()).optional(), group: z.string().optional(), duration: z.string().optional(), instructor: z.string().optional(), price: z.number().nonnegative().optional(), thumbnail: z.string().optional(), featured: z.boolean().optional(), published: z.boolean().optional() });
 const userCreateSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['admin','teacher','student','guardian']), phone: z.string().optional(), classLevel: z.string().optional(), studentId: z.string().optional(), group: z.string().optional(), guardianOf: z.string().optional() });
+const studentId = (user) => user.role === 'guardian' ? user.guardianOf : user.id;
+const enrolledCourseIds = async (user) => Enrollment.find({ student: studentId(user), status: { $in: ['active', 'completed'] } }).distinct('course');
+const requireCourseAccess = async (user, course) => !['student', 'guardian'].includes(user.role) || Boolean(course && await Enrollment.exists({ student: studentId(user), course, status: { $in: ['active', 'completed'] } }));
 const upload = multer({
   storage: multer.diskStorage({ destination: 'uploads', filename: (_req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`) }),
   limits: { fileSize: 25 * 1024 * 1024 },
@@ -33,6 +37,13 @@ api.post('/auth/login', validate(loginSchema), async (req, res) => {
   res.json({ token: signToken(user), user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 });
 
+api.post('/auth/register', validate(registerSchema), async (req, res) => {
+  const email = req.body.email.toLowerCase();
+  if (await User.exists({ email })) return res.status(409).json({ message: 'An account with this email already exists' });
+  const user = await User.create({ ...req.body, email, role: 'student', password: await bcrypt.hash(req.body.password, 12) });
+  res.status(201).json({ token: signToken(user), user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+});
+
 api.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 api.post('/auth/forgot-password', async (req, res) => {
@@ -40,23 +51,45 @@ api.post('/auth/forgot-password', async (req, res) => {
   res.json({ message: exists ? 'Reset request recorded. Contact the administrator for a temporary password.' : 'If the account exists, reset instructions will be provided.' });
 });
 
-api.get('/courses', async (req, res) => {
-  const query = req.query.all === 'true' ? {} : { published: true };
-  res.json(await Course.find(query).populate('instructor', 'name avatar').sort({ featured: -1, createdAt: -1 }));
+api.get('/courses', optionalAuth, async (req, res) => {
+  const query: any = req.query.all === 'true' && ['admin', 'teacher'].includes(req.user?.role) ? {} : { published: true };
+  const enrolled = req.user && ['student', 'guardian'].includes(req.user.role) ? (await enrolledCourseIds(req.user)).map(String) : [];
+  if (req.query.mine === 'true') query._id = { $in: enrolled };
+  const courses = await Course.find(query).populate('instructor', 'name avatar').sort({ featured: -1, createdAt: -1 });
+  res.json(courses.map((course) => ({ ...course.toObject(), enrolled: enrolled.includes(course.id) })));
 });
 api.post('/courses', requireAuth, allow('admin'), validate(courseSchema), async (req, res) => res.status(201).json(await Course.create(req.body)));
 api.patch('/courses/:id', requireAuth, allow('admin'), async (req, res) => res.json(await Course.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 api.delete('/courses/:id', requireAuth, allow('admin'), async (req, res) => { await Course.findByIdAndDelete(req.params.id); res.status(204).end(); });
+api.post('/courses/:id/order', requireAuth, allow('student'), async (req, res) => {
+  const course = await Course.findById(req.params.id);
+  if (!course?.published) return res.status(404).json({ message: 'Course not found' });
+  const existing = await Enrollment.findOne({ student: req.user.id, course: course.id, status: { $in: ['active', 'completed'] } });
+  if (existing) return res.json({ enrolled: true, message: 'You already have access to this course' });
+  if (course.price === 0) {
+    await Enrollment.findOneAndUpdate({ student: req.user.id, course: course.id }, { status: 'active' }, { upsert: true, new: true });
+    return res.status(201).json({ enrolled: true, message: 'Free course added to your dashboard' });
+  }
+  const payment = await Payment.findOneAndUpdate(
+    { student: req.user.id, course: course.id, status: 'pending' },
+    { amount: course.price, method: req.body.method || 'manual', transactionId: req.body.transactionId },
+    { upsert: true, new: true },
+  );
+  res.status(201).json({ enrolled: false, payment, message: 'Order submitted. Access starts after payment confirmation.' });
+});
 
-api.get('/content', async (req, res) => {
+api.get('/content', optionalAuth, async (req, res) => {
   const query: any = { published: true };
   if (req.query.type) query.type = req.query.type;
   if (req.query.course) query.course = req.query.course;
+  if (!req.user) query.course = { $exists: false };
+  else if (['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
   res.json(await Content.find(query).populate('course', 'title').populate('teacher', 'name').sort({ startsAt: 1, createdAt: -1 }));
 });
 api.get('/content/:id', requireAuth, async (req, res) => {
   const item = await Content.findById(req.params.id).populate('course', 'title').populate('teacher', 'name');
   if (!item) return res.status(404).json({ message: 'Content not found' });
+  if (!['notice', 'book'].includes(item.type) && !(await requireCourseAccess(req.user, item.course?._id || item.course))) return res.status(403).json({ message: 'Purchase this course to access its content' });
   res.json(item);
 });
 api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Content.create({ ...req.body, teacher: req.user.id })));
@@ -65,12 +98,17 @@ api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, r
 
 api.get('/exams', requireAuth, async (req, res) => {
   const projection = req.user.role === 'student' ? '-questions.answer' : '';
-  res.json(await Exam.find({ published: true }).select(projection).populate('course', 'title'));
+  const query: any = { published: true };
+  if (['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
+  res.json(await Exam.find(query).select(projection).populate('course', 'title'));
 });
 api.post('/exams', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Exam.create(req.body)));
 api.patch('/exams/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Exam.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 
 api.post('/exams/:id/start', requireAuth, allow('student'), async (req, res) => {
+  const securedExam = await Exam.findById(req.params.id).select('course');
+  if (!securedExam) return res.status(404).json({ message: 'Exam not found' });
+  if (!(await requireCourseAccess(req.user, securedExam.course))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
   let attempt = await ExamAttempt.findOne({ exam: req.params.id, student: req.user.id, status: 'in-progress' });
   if (!attempt) attempt = await ExamAttempt.create({ exam: req.params.id, student: req.user.id });
   const exam = await Exam.findById(req.params.id).select('-questions.answer');
@@ -79,6 +117,7 @@ api.post('/exams/:id/start', requireAuth, allow('student'), async (req, res) => 
 api.post('/exams/:id/submit', requireAuth, allow('student'), async (req, res) => {
   const exam = await Exam.findById(req.params.id);
   if (!exam) return res.status(404).json({ message: 'Exam not found' });
+  if (!(await requireCourseAccess(req.user, exam.course))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
   let score = 0, correct = 0, wrong = 0, unanswered = 0;
   const answers = req.body.answers || [];
   exam.questions.forEach((q) => {
@@ -105,7 +144,10 @@ api.get('/qa', requireAuth, async (req, res) => {
   const query = req.user.role === 'student' ? { student: req.user.id } : {};
   res.json(await QA.find(query).populate('student teacher', 'name').populate('course', 'title').sort({ createdAt: -1 }));
 });
-api.post('/qa', requireAuth, allow('student'), async (req, res) => res.status(201).json(await QA.create({ ...req.body, student: req.user.id })));
+api.post('/qa', requireAuth, allow('student'), async (req, res) => {
+  if (!req.body.course || !(await requireCourseAccess(req.user, req.body.course))) return res.status(403).json({ message: 'Purchase this course before asking course questions' });
+  res.status(201).json(await QA.create({ ...req.body, student: req.user.id }));
+});
 api.patch('/qa/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
   const update = { ...req.body, teacher: req.user.id };
   if (req.body.answer) update.$push = { answers: { author: req.user.id, body: req.body.answer } };
@@ -134,11 +176,18 @@ Object.entries(resources).forEach(([name, resource]) => {
     const query: any = {};
     const subjectStudent = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
     if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
+    if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
     if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
     res.json(await resource.model.find(query).sort({ createdAt: -1 }));
   });
   api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => res.status(201).json(await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) })));
-  api.patch(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => res.json(await resource.model.findByIdAndUpdate(req.params.id, req.body, { new: true })));
+  api.patch(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => {
+    const updated = await resource.model.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (name === 'payments' && updated?.status === 'paid') {
+      await Enrollment.findOneAndUpdate({ student: updated.student, course: updated.course }, { status: 'active' }, { upsert: true, new: true });
+    }
+    res.json(updated);
+  });
   api.delete(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => { await resource.model.findByIdAndDelete(req.params.id); res.status(204).end(); });
 });
 
@@ -159,12 +208,15 @@ api.get('/search', requireAuth, async (req, res) => {
   const term = String(req.query.q || '').trim();
   if (!term) return res.json([]);
   const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const restricted = ['student', 'guardian'].includes(req.user.role);
+  const courseIds = restricted ? await enrolledCourseIds(req.user) : [];
+  const courseScope = restricted ? { course: { $in: courseIds } } : {};
   const [courses, content, notebooks, exams, qa] = await Promise.all([
     Course.find({ $or: [{ title: rx }, { summary: rx }] }).limit(8),
-    Content.find({ $or: [{ title: rx }, { description: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
-    Notebook.find({ $or: [{ title: rx }, { content: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
-    Exam.find({ $or: [{ title: rx }, { subject: rx }] }).limit(8),
-    QA.find({ question: rx }).limit(8),
+    Content.find({ ...courseScope, $or: [{ title: rx }, { description: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
+    Notebook.find({ ...courseScope, $or: [{ title: rx }, { content: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
+    Exam.find({ ...courseScope, $or: [{ title: rx }, { subject: rx }] }).limit(8),
+    QA.find({ ...(req.user.role === 'student' ? { student: req.user.id } : {}), question: rx }).limit(8),
   ]);
   res.json([...courses.map(x => ({ type: 'course', id: x.id, title: x.title })), ...content.map(x => ({ type: x.type, id: x.id, title: x.title })), ...notebooks.map(x => ({ type: 'notebook', id: x.id, title: x.title })), ...exams.map(x => ({ type: 'exam', id: x.id, title: x.title })), ...qa.map(x => ({ type: 'qa', id: x.id, title: x.question }))]);
 });
@@ -178,9 +230,10 @@ api.get('/dashboard', requireAuth, async (req, res) => {
   const response: any = { students, teachers, guardians, courses, batches, classes, exams, pending, role: req.user.role };
   if (['student', 'guardian'].includes(req.user.role)) {
     const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
+    const courseIds = await enrolledCourseIds(req.user);
     const [results, attendanceRows, enrollments, upcoming] = await Promise.all([
       ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student }),
-      Content.find({ type: 'live-class', startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
+      Content.find({ type: 'live-class', course: { $in: courseIds }, startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
     ]);
     const present = attendanceRows.filter(x => x.status === 'present').length;
     response.student = { courseProgress: enrollments.length ? Math.round(enrollments.reduce((s,x)=>s+x.progress,0)/enrollments.length) : 0, examsCompleted: results.length, attendance: attendanceRows.length ? Math.round((present/attendanceRows.length)*100) : 0, upcoming };

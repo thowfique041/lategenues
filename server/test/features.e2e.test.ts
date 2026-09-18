@@ -52,13 +52,22 @@ after(async () => {
 });
 
 suite('all core features work with role permissions', async () => {
+  const registration = await request(app).post('/api/auth/register').send({ name: `${tag} Registered`, email: email('registered'), password: 'Quality@123', classLevel: 'Class 10' }).expect(201);
+  assert.equal(registration.body.user.role, 'student');
+  const registeredToken = registration.body.token;
   const course = await request(app).post('/api/courses').set('Authorization', `Bearer ${adminToken}`).send({ title: `${tag} Course`, slug: tag.toLowerCase(), category: 'academic', price: 100 }).expect(201);
   courseId = course.body._id;
   const batch = await request(app).post('/api/batches').set('Authorization', `Bearer ${adminToken}`).send({ name: `${tag} Batch`, course: courseId, students: [student.id], teachers: [teacher.id] }).expect(201);
   batchId = batch.body._id;
   await request(app).post('/api/enrollments').set('Authorization', `Bearer ${adminToken}`).send({ student: student.id, course: courseId, batch: batchId, progress: 25 }).expect(201);
   await request(app).post('/api/routines').set('Authorization', `Bearer ${teacherToken}`).send({ course: courseId, batch: batchId, subject: 'Physics', day: 'Monday', startsAt: '20:00', endsAt: '21:00' }).expect(201);
-  await request(app).post('/api/content').set('Authorization', `Bearer ${teacherToken}`).send({ type: 'recording', title: `${tag} Video`, course: courseId, url: 'https://youtu.be/dQw4w9WgXcQ' }).expect(201);
+  const lesson = await request(app).post('/api/content').set('Authorization', `Bearer ${teacherToken}`).send({ type: 'recording', title: `${tag} Video`, course: courseId, url: 'https://youtu.be/dQw4w9WgXcQ' }).expect(201);
+  const lockedContent = await request(app).get(`/api/content/${lesson.body._id}`).set('Authorization', `Bearer ${registeredToken}`).expect(403);
+  assert.match(lockedContent.body.message, /Purchase/);
+  const order = await request(app).post(`/api/courses/${courseId}/order`).set('Authorization', `Bearer ${registeredToken}`).send({ method: 'manual' }).expect(201);
+  assert.equal(order.body.enrolled, false);
+  await request(app).patch(`/api/payments/${order.body.payment._id}`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'paid' }).expect(200);
+  await request(app).get(`/api/content/${lesson.body._id}`).set('Authorization', `Bearer ${registeredToken}`).expect(200);
   await request(app).post('/api/notebooks').set('Authorization', `Bearer ${teacherToken}`).send({ title: `${tag} Notebook`, course: courseId, content: 'F = ma' }).expect(201);
 
   const exam = await request(app).post('/api/exams').set('Authorization', `Bearer ${teacherToken}`).send({ title: `${tag} Exam`, course: courseId, totalMarks: 1, passMarks: 1, questions: [{ prompt: '2 + 2?', options: ['3','4'], answer: 1, marks: 1 }] }).expect(201);

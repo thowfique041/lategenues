@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './auth-context';
 import { Layout } from './ui/Layout';
 import { Home } from './views/Home';
 import { Login } from './views/Login';
+import { Register } from './views/Register';
 import { Courses } from './views/Courses';
 import { Dashboard } from './views/Dashboard';
 import { ModulePage } from './views/ModulePage';
@@ -34,6 +35,7 @@ function App() {
       <Route path="contact" element={<PublicPage type="contact" />} />
       <Route path="faq" element={<PublicPage type="faq" />} />
       <Route path="login" element={<Login />} />
+      <Route path="register" element={<Register />} />
       <Route path="dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="dashboard/:module" element={<Protected><ModulePage /></Protected>} />
       <Route path="exam/:id" element={<Protected><ExamRoom /></Protected>} />
