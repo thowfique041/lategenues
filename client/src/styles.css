@@ -26,3 +26,6 @@
 @media(max-width:600px){.auth-page{padding:28px 14px}.auth-panel{border-radius:20px}.auth-form{padding:34px 22px}.auth-form h2{font-size:27px}.auth-switch{align-items:flex-start;flex-direction:column}.auth-fields{gap:12px}}
 
 .auth-form label .optional{float:right;color:#8a98aa;font-size:10px;font-weight:600;letter-spacing:.2px}.auth-form .password input{padding-right:46px}.auth-form .password button{top:14px;width:34px;height:34px;display:grid;place-items:center;cursor:pointer;border-radius:8px}.auth-form .password button:hover{background:#edf7f6;color:var(--teal)}
+
+/* Persistent dashboard navigation */
+@media(min-width:901px){.dashboard>.dash-side{position:sticky;top:76px;height:calc(100vh - 76px);overflow-y:auto;z-index:5}.dashboard-module{padding:0;overflow:visible}.dashboard-module .module-page{min-height:calc(100vh - 76px)}.dashboard-module .module-page>.container{width:min(1240px,calc(100% - 64px))}}
