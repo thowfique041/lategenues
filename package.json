@@ -2,6 +2,7 @@
   "name": "lategenues",
   "private": true,
   "version": "1.0.0",
+  "engines": { "node": ">=22 <23" },
   "workspaces": ["client", "server"],
   "scripts": {
     "dev": "concurrently -n API,WEB -c cyan,magenta \"npm run dev -w server\" \"npm run dev -w client\"",

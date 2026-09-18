@@ -3,8 +3,8 @@ services:
     name: lategenues-api
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter lategenues-client build && pnpm --filter lategenues-server build
-    startCommand: pnpm --filter lategenues-server start
+    buildCommand: npm install --include=dev && npm run build --workspace=lategenues-client && npm run build --workspace=lategenues-server
+    startCommand: npm run start --workspace=lategenues-server
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
