@@ -11,6 +11,7 @@ export const api = Router();
 const validate = (schema) => (req, res, next) => { const result = schema.safeParse(req.body); if (!result.success) return res.status(400).json({ message: result.error.issues[0]?.message || 'Invalid request' }); req.body = result.data; next(); };
 const loginSchema = z.object({ email: z.string().min(3), password: z.string().min(6) });
 const registerSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), phone: z.string().optional(), classLevel: z.string().optional(), group: z.string().optional() });
+const profileSchema = z.object({ name: z.string().min(2), phone: z.string().max(30).optional(), classLevel: z.string().max(80).optional(), group: z.string().max(80).optional(), bio: z.string().max(500).optional(), avatar: z.string().url().or(z.literal('')).optional() });
 const courseSchema = z.object({ title: z.string().min(2), slug: z.string().min(2).regex(/^[a-z0-9-]+$/), summary: z.string().optional(), category: z.enum(['academic','admission']).optional(), classLevel: z.string().optional(), subjects: z.array(z.string()).optional(), group: z.string().optional(), duration: z.string().optional(), instructor: z.string().optional(), price: z.number().nonnegative().optional(), thumbnail: z.string().optional(), featured: z.boolean().optional(), published: z.boolean().optional() });
 const userCreateSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['admin','teacher','student','guardian']), phone: z.string().optional(), classLevel: z.string().optional(), studentId: z.string().optional(), group: z.string().optional(), guardianOf: z.string().optional() });
 const studentId = (user) => user.role === 'guardian' ? user.guardianOf : user.id;
@@ -45,6 +46,12 @@ api.post('/auth/register', validate(registerSchema), async (req, res) => {
 });
 
 api.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+
+api.patch('/auth/profile', requireAuth, validate(profileSchema), async (req, res) => {
+  const user = await User.findByIdAndUpdate(req.user.id, req.body, { new: true, runValidators: true });
+  if (!user) return res.status(404).json({ message: 'Account not found' });
+  res.json({ user });
+});
 
 api.post('/auth/forgot-password', async (req, res) => {
   const exists = await User.exists({ email: req.body.email?.toLowerCase() });

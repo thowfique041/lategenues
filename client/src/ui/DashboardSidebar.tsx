@@ -1,4 +1,5 @@
-import { BookOpen, CalendarDays, CheckCircle2, CircleHelp, ClipboardCheck, FileText, MessageSquareWarning, PlayCircle, TrendingUp, Users } from 'lucide-react';
+import { BookOpen, CalendarDays, CheckCircle2, CircleHelp, ClipboardCheck, FileText, MessageSquareWarning, PanelLeftClose, PanelLeftOpen, PlayCircle, TrendingUp, Users } from 'lucide-react';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 
@@ -11,6 +12,10 @@ const roleMenus = {
 
 export function DashboardSidebar() {
   const { user } = useAuth(); const { pathname } = useLocation();
+  const [open, setOpen] = useState(() => localStorage.getItem('lg_sidebar') !== 'closed');
   const menus = roleMenus[user.role] || roleMenus.student;
-  return <aside className="dash-side"><div><small>WORKSPACE</small>{menus.map(([path,label,Icon])=>{const href=`/dashboard/${path}`;return <Link className={pathname===href?'active':''} to={href} key={path}><Icon/>{label}</Link>})}</div><div className="support-card"><CircleHelp/><b>Need help?</b><p>Our support team is ready.</p><a href="mailto:hello@lategenues.com">Contact support</a></div></aside>;
+  function toggle(){const next=!open;setOpen(next);localStorage.setItem('lg_sidebar',next?'open':'closed')}
+  return <><button className={'sidebar-toggle '+(open?'is-open':'')} onClick={toggle} aria-label={open?'Close sidebar':'Open sidebar'} title={open?'Close sidebar':'Open sidebar'}>{open?<PanelLeftClose/>:<PanelLeftOpen/>}</button>
+    <aside className={'dash-side '+(open?'open':'collapsed')}><div><small>WORKSPACE</small>{menus.map(([path,label,Icon])=>{const href=`/dashboard/${path}`;return <Link className={pathname===href?'active':''} to={href} key={path}><Icon/>{label}</Link>})}</div><div className="support-card"><CircleHelp/><b>Need help?</b><p>Our support team is ready.</p><a href="mailto:hello@lategenues.com">Contact support</a></div></aside>
+  </>;
 }
