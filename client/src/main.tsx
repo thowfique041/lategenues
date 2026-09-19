@@ -15,6 +15,7 @@ import { Notebook } from './views/Notebook';
 import { ExamBuilder } from './views/ExamBuilder';
 import { ContentViewer } from './views/ContentViewer';
 import { Profile } from './views/Profile';
+import { CourseRoom } from './views/CourseRoom';
 import './styles.css';
 
 function Protected({ children }) {
@@ -40,6 +41,7 @@ function App() {
       <Route path="dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="dashboard/:module" element={<Protected><ModulePage /></Protected>} />
       <Route path="profile" element={<Protected><Profile /></Protected>} />
+      <Route path="course/:id" element={<Protected><CourseRoom /></Protected>} />
       <Route path="exam/:id" element={<Protected><ExamRoom /></Protected>} />
       <Route path="dashboard/exam-builder" element={<Protected><ExamBuilder /></Protected>} />
       <Route path="notebook/:id" element={<Protected><Notebook /></Protected>} />

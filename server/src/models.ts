@@ -49,12 +49,18 @@ const batchSchema = new Schema({
   active: { type: Boolean, default: true },
 }, options);
 
+const subjectSchema = new Schema({ course: { type: Schema.Types.ObjectId, ref: 'Course', required: true, index: true }, batch: { type: Schema.Types.ObjectId, ref: 'Batch' }, name: { type: String, required: true, trim: true }, order: { type: Number, default: 0 }, active: { type: Boolean, default: true } }, options);
+subjectSchema.index({ course: 1, batch: 1, name: 1 }, { unique: true });
+const chapterSchema = new Schema({ course: { type: Schema.Types.ObjectId, ref: 'Course', required: true, index: true }, batch: { type: Schema.Types.ObjectId, ref: 'Batch' }, subject: { type: Schema.Types.ObjectId, ref: 'Subject', required: true, index: true }, title: { type: String, required: true, trim: true }, order: { type: Number, default: 0 }, active: { type: Boolean, default: true } }, options);
+
 const enrollmentSchema = new Schema({
   student: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   course: { type: Schema.Types.ObjectId, ref: 'Course', required: true },
   batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
   progress: { type: Number, default: 0, min: 0, max: 100 },
   completedContent: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
+  lastContent: { type: Schema.Types.ObjectId, ref: 'Content' },
+  lastActivity: Date,
   status: { type: String, enum: ['active', 'completed', 'expired'], default: 'active' },
 }, options);
 
@@ -67,6 +73,12 @@ const contentSchema = new Schema({
   teacher: { type: Schema.Types.ObjectId, ref: 'User' },
   subject: String,
   chapter: String,
+  subjectId: { type: Schema.Types.ObjectId, ref: 'Subject' },
+  chapterId: { type: Schema.Types.ObjectId, ref: 'Chapter' },
+  relatedNotebook: { type: Schema.Types.ObjectId, ref: 'Notebook' },
+  relatedExam: { type: Schema.Types.ObjectId, ref: 'Exam' },
+  relatedMaterials: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
+  fileSize: Number,
   url: String,
   fileType: String,
   startsAt: Date,
@@ -82,6 +94,8 @@ const examSchema = new Schema({
   course: { type: Schema.Types.ObjectId, ref: 'Course' },
   batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
   subject: String,
+  subjectId: { type: Schema.Types.ObjectId, ref: 'Subject' },
+  chapterId: { type: Schema.Types.ObjectId, ref: 'Chapter' },
   duration: { type: Number, default: 30 },
   totalMarks: { type: Number, default: 100 },
   passMarks: { type: Number, default: 40 },
@@ -103,6 +117,7 @@ const examAttemptSchema = new Schema({
   percentage: { type: Number, default: 0 },
   status: { type: String, enum: ['in-progress', 'submitted', 'reviewed'], default: 'in-progress' },
   submittedAt: Date,
+  startedAt: { type: Date, default: Date.now },
 }, options);
 
 const notebookSchema = new Schema({
@@ -112,6 +127,9 @@ const notebookSchema = new Schema({
   teacher: { type: Schema.Types.ObjectId, ref: 'User' },
   subject: String,
   chapter: String,
+  subjectId: { type: Schema.Types.ObjectId, ref: 'Subject' },
+  chapterId: { type: Schema.Types.ObjectId, ref: 'Chapter' },
+  contentId: { type: Schema.Types.ObjectId, ref: 'Content' },
   content: { type: String, default: '' },
   drawing: String,
   status: { type: String, enum: ['draft', 'live', 'saved'], default: 'draft' },
@@ -143,6 +161,8 @@ const qaSchema = new Schema({
   course: { type: Schema.Types.ObjectId, ref: 'Course' },
   subject: String,
   chapter: String,
+  subjectId: { type: Schema.Types.ObjectId, ref: 'Subject' },
+  chapterId: { type: Schema.Types.ObjectId, ref: 'Chapter' },
   question: { type: String, required: true },
   attachment: String,
   answers: [{ author: { type: Schema.Types.ObjectId, ref: 'User' }, body: String, createdAt: { type: Date, default: Date.now } }],
@@ -184,9 +204,14 @@ const complaintSchema = new Schema({
   status: { type: String, enum: ['pending', 'under-review', 'in-progress', 'resolved'], default: 'pending' },
 }, options);
 
+const lessonProgressSchema = new Schema({ student: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true }, course: { type: Schema.Types.ObjectId, ref: 'Course', required: true, index: true }, content: { type: Schema.Types.ObjectId, ref: 'Content', required: true }, positionSeconds: { type: Number, default: 0, min: 0 }, completed: { type: Boolean, default: false }, lastActivity: { type: Date, default: Date.now } }, options);
+lessonProgressSchema.index({ student: 1, content: 1 }, { unique: true });
+
 export const User = model('User', userSchema);
 export const Course = model('Course', courseSchema);
 export const Batch = model('Batch', batchSchema);
+export const Subject = model('Subject', subjectSchema);
+export const Chapter = model('Chapter', chapterSchema);
 export const Enrollment = model('Enrollment', enrollmentSchema);
 export const Content = model('Content', contentSchema);
 export const Exam = model('Exam', examSchema);
@@ -199,3 +224,4 @@ export const Complaint = model('Complaint', complaintSchema);
 export const Notification = model('Notification', notificationSchema);
 export const Payment = model('Payment', paymentSchema);
 export const Setting = model('Setting', settingSchema);
+export const LessonProgress = model('LessonProgress', lessonProgressSchema);

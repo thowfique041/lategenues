@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { app } from './app.js';
-import { Enrollment, Notebook, User } from './models.js';
+import { Batch, Course, Enrollment, Notebook, User } from './models.js';
 
 const server = createServer(app);
 const io = new Server(server, { cors: { origin: config.clientUrl.split(',').map(x => x.trim()), credentials: true } });
@@ -14,17 +14,22 @@ io.use(async (socket, next) => {
 });
 io.on('connection', (socket) => {
   socket.on('notebook:join', async (id) => {
-    const note = await Notebook.findById(id).select('course');
+    const note = await Notebook.findById(id).select('course batch');
     const user = (socket as any).user;
     if (!note) return;
+    if (user.role === 'teacher' && !await Course.exists({ _id: note.course, instructor: user.id }) && !await Batch.exists({ ...(note.batch ? { _id: note.batch } : {}), course: note.course, teachers: user.id, active: true })) return;
     if (['student', 'guardian'].includes(user.role)) {
       const student = user.role === 'guardian' ? user.guardianOf : user.id;
-      if (!await Enrollment.exists({ student, course: note.course, status: { $in: ['active', 'completed'] } })) return;
+      if (!await Enrollment.exists({ student, course: note.course, ...(note.batch ? { batch: note.batch } : {}), status: { $in: ['active', 'completed'] } })) return;
     }
     socket.join(`notebook:${id}`);
   });
   socket.on('notebook:update', async ({ id, content, drawing }) => {
     if (!['admin', 'teacher'].includes((socket as any).user?.role)) return;
+    const author = (socket as any).user;
+    const existing = await Notebook.findById(id);
+    if (!existing) return;
+    if (author.role === 'teacher' && !await Course.exists({ _id: existing.course, instructor: author.id }) && !await Batch.exists({ ...(existing.batch ? { _id: existing.batch } : {}), course: existing.course, teachers: author.id, active: true })) return;
     const note = await Notebook.findByIdAndUpdate(id, { content, drawing, status: 'live' }, { new: true });
     if (note) io.to(`notebook:${id}`).emit('notebook:changed', { id, content: note.content, drawing: note.drawing, updatedAt: (note as any).updatedAt });
   });

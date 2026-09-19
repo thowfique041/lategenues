@@ -5,9 +5,11 @@ import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { allow, optionalAuth, requireAuth, signToken } from './auth.js';
-import { Attendance, Batch, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, User } from './models.js';
+import { Attendance, Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from './models.js';
+import { lms, refreshCourseProgress } from './lms.js';
 
 export const api = Router();
+api.use(lms);
 const validate = (schema) => (req, res, next) => { const result = schema.safeParse(req.body); if (!result.success) return res.status(400).json({ message: result.error.issues[0]?.message || 'Invalid request' }); req.body = result.data; next(); };
 const loginSchema = z.object({ email: z.string().min(3), password: z.string().min(6) });
 const registerSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), phone: z.string().optional(), classLevel: z.string().optional(), group: z.string().optional() });
@@ -16,7 +18,42 @@ const courseSchema = z.object({ title: z.string().min(2), slug: z.string().min(2
 const userCreateSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['admin','teacher','student','guardian']), phone: z.string().optional(), classLevel: z.string().optional(), studentId: z.string().optional(), group: z.string().optional(), guardianOf: z.string().optional() });
 const studentId = (user) => user.role === 'guardian' ? user.guardianOf : user.id;
 const enrolledCourseIds = async (user) => Enrollment.find({ student: studentId(user), status: { $in: ['active', 'completed'] } }).distinct('course');
-const requireCourseAccess = async (user, course) => !['student', 'guardian'].includes(user.role) || Boolean(course && await Enrollment.exists({ student: studentId(user), course, status: { $in: ['active', 'completed'] } }));
+const requireCourseAccess = async (user, course) => user.role === 'admin' || (user.role === 'teacher' ? await canManageCourse(user, course) : Boolean(course && await Enrollment.exists({ student: studentId(user), course, status: { $in: ['active', 'completed'] } })));
+const requireBatchAccess = async (user, course, batch) => !await requireCourseAccess(user, course) ? false : user.role === 'teacher' ? (!batch || await canManageBatch(user, course, batch)) : !batch || !['student','guardian'].includes(user.role) || Boolean(await Enrollment.exists({ student: studentId(user), course, batch, status: { $in: ['active','completed'] } }));
+const studentBatchScope = async (user) => {
+  const enrollments = await Enrollment.find({ student: studentId(user), status: { $in: ['active','completed'] } }).select('course batch');
+  return enrollments.flatMap(x => x.batch ? [{ course: x.course, batch: x.batch }, { course: x.course, batch: null }] : [{ course: x.course, batch: null }]);
+};
+const managedCourseIds = async (user) => {
+  const direct = await Course.find({ instructor: user.id }).distinct('_id');
+  const batches = await Batch.find({ teachers: user.id, active: true }).distinct('course');
+  return [...new Set([...direct, ...batches].map(String))];
+};
+const canManageCourse = async (user, course) => user.role === 'admin' || Boolean(course && (await Course.exists({ _id: course, instructor: user.id }) || await Batch.exists({ course, teachers: user.id, active: true })));
+const canManageBatch = async (user, course, batch) => user.role === 'admin' || Boolean(course && (await Course.exists({ _id: course, instructor: user.id }) || (batch && await Batch.exists({ _id: batch, course, teachers: user.id, active: true }))));
+const teacherBatchScope = async (user) => {
+  const direct = await Course.find({ instructor: user.id }).distinct('_id');
+  const assigned = await Batch.find({ teachers: user.id, active: true }).select('course _id');
+  return [{ course: { $in: direct } }, ...assigned.flatMap(x => [{ course: x.course, batch: x._id }, { course: x.course, batch: null }])];
+};
+const validCourseLinks = async (body) => {
+  if (!body.course) return false;
+  if (body.batch && !await Batch.exists({ _id: body.batch, course: body.course })) return false;
+  if (body.subjectId) {
+    const subject = await Subject.findOne({ _id: body.subjectId, course: body.course });
+    if (!subject || (subject.batch && String(subject.batch) !== String(body.batch))) return false;
+  }
+  if (body.chapterId) {
+    if (!body.subjectId) return false;
+    const chapter = await Chapter.findOne({ _id: body.chapterId, course: body.course, subject: body.subjectId });
+    if (!chapter || (chapter.batch && String(chapter.batch) !== String(body.batch))) return false;
+  }
+  if (body.contentId && !await Content.exists({ _id: body.contentId, course: body.course })) return false;
+  if (body.relatedNotebook && !await Notebook.exists({ _id: body.relatedNotebook, course: body.course })) return false;
+  if (body.relatedExam && !await Exam.exists({ _id: body.relatedExam, course: body.course })) return false;
+  if (body.relatedMaterials?.length && await Content.countDocuments({ _id: { $in: body.relatedMaterials }, course: body.course }) !== body.relatedMaterials.length) return false;
+  return true;
+};
 const upload = multer({
   storage: multer.diskStorage({ destination: 'uploads', filename: (_req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`) }),
   limits: { fileSize: 25 * 1024 * 1024 },
@@ -59,7 +96,7 @@ api.post('/auth/forgot-password', async (req, res) => {
 });
 
 api.get('/courses', optionalAuth, async (req, res) => {
-  const query: any = req.query.all === 'true' && ['admin', 'teacher'].includes(req.user?.role) ? {} : { published: true };
+  const query: any = req.query.all === 'true' && req.user?.role === 'admin' ? {} : req.query.all === 'true' && req.user?.role === 'teacher' ? { _id: { $in: await managedCourseIds(req.user) } } : { published: true };
   const enrolled = req.user && ['student', 'guardian'].includes(req.user.role) ? (await enrolledCourseIds(req.user)).map(String) : [];
   const pending = req.user?.role === 'student' ? (await Payment.find({ student: req.user.id, status: 'pending' }).distinct('course')).map(String) : [];
   if (req.query.mine === 'true') query._id = { $in: enrolled };
@@ -91,43 +128,96 @@ api.get('/content', optionalAuth, async (req, res) => {
   if (req.query.type) query.type = req.query.type;
   if (req.query.course) query.course = req.query.course;
   if (!req.user) query.course = { $exists: false };
-  else if (['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
+  else if (['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); }
+  else if (req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
   res.json(await Content.find(query).populate('course', 'title').populate('teacher', 'name').sort({ startsAt: 1, createdAt: -1 }));
 });
 api.get('/content/:id', requireAuth, async (req, res) => {
   const item = await Content.findById(req.params.id).populate('course', 'title').populate('teacher', 'name');
-  if (!item) return res.status(404).json({ message: 'Content not found' });
-  if (!['notice', 'book'].includes(item.type) && !(await requireCourseAccess(req.user, item.course?._id || item.course))) return res.status(403).json({ message: 'Purchase this course to access its content' });
+  if (!item || (!item.published && ['student','guardian'].includes(req.user.role))) return res.status(404).json({ message: 'Content not found' });
+  if (item.type !== 'notice' && !(await requireBatchAccess(req.user, item.course?._id || item.course, item.batch))) return res.status(403).json({ message: 'Purchase this course to access its content' });
   res.json(item);
 });
-api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Content.create({ ...req.body, teacher: req.user.id })));
-api.patch('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Content.findByIdAndUpdate(req.params.id, req.body, { new: true })));
-api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => { await Content.findByIdAndDelete(req.params.id); res.status(204).end(); });
+api.get('/content/:id/file', requireAuth, async (req, res) => {
+  const item = await Content.findById(req.params.id);
+  if (!item || !item.url?.startsWith('/uploads/') || (!item.published && ['student','guardian'].includes(req.user.role))) return res.status(404).json({ message: 'File not found' });
+  if (item.type !== 'notice' && !await requireBatchAccess(req.user, item.course, item.batch)) return res.status(403).json({ message: 'Course access required' });
+  if (req.query.download === 'true' && !item.downloadable) return res.status(403).json({ message: 'Download is disabled for this file' });
+  const filename = path.basename(item.url);
+  res.setHeader('Content-Disposition', item.downloadable && req.query.download === 'true' ? `attachment; filename="${filename}"` : `inline; filename="${filename}"`);
+  res.sendFile(path.resolve('uploads', filename), error => { if (error && !res.headersSent) res.status(404).json({ message: 'File unavailable' }) });
+});
+
+api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  if (req.body.type !== 'notice' && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch))) return res.status(403).json({ message: 'Assign a valid course, subject and chapter you manage' });
+  res.status(201).json(await Content.create({ ...req.body, teacher: req.user.id }));
+});
+api.patch('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  const item = await Content.findById(req.params.id);
+  if (!item) return res.status(404).json({ message: 'Content not found' });
+  const course = req.body.course || item.course;
+  if (item.type !== 'notice' && (!await canManageBatch(req.user, item.course, item.batch) || !await canManageBatch(req.user, course, req.body.batch || item.batch) || !await validCourseLinks({ ...item.toObject(), ...req.body, course }))) return res.status(403).json({ message: 'Course assignment invalid' });
+  res.json(await Content.findByIdAndUpdate(item.id, req.body, { new: true, runValidators: true }));
+});
+api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  const item = await Content.findById(req.params.id);
+  if (!item) return res.status(404).json({ message: 'Content not found' });
+  if (item.type !== 'notice' && !await canManageBatch(req.user, item.course, item.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
+  await item.deleteOne(); res.status(204).end();
+});
 
 api.get('/exams', requireAuth, async (req, res) => {
   const projection = req.user.role === 'student' ? '-questions.answer' : '';
   const query: any = { published: true };
-  if (['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
+  if (['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); }
+  else if (req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
   res.json(await Exam.find(query).select(projection).populate('course', 'title'));
 });
-api.post('/exams', requireAuth, allow('admin', 'teacher'), async (req, res) => res.status(201).json(await Exam.create(req.body)));
-api.patch('/exams/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => res.json(await Exam.findByIdAndUpdate(req.params.id, req.body, { new: true })));
+api.post('/exams', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  if (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
+  res.status(201).json(await Exam.create(req.body));
+});
+api.patch('/exams/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  const exam = await Exam.findById(req.params.id);
+  if (!exam) return res.status(404).json({ message: 'Exam not found' });
+  const course = req.body.course || exam.course;
+  if (!await canManageBatch(req.user, exam.course, exam.batch) || !await canManageBatch(req.user, course, req.body.batch || exam.batch) || !await validCourseLinks({ ...exam.toObject(), ...req.body, course })) return res.status(403).json({ message: 'Course assignment invalid' });
+  res.json(await Exam.findByIdAndUpdate(exam.id, req.body, { new: true, runValidators: true }));
+});
 
 api.post('/exams/:id/start', requireAuth, allow('student'), async (req, res) => {
-  const securedExam = await Exam.findById(req.params.id).select('course');
+  const securedExam = await Exam.findById(req.params.id).select('course batch');
   if (!securedExam) return res.status(404).json({ message: 'Exam not found' });
-  if (!(await requireCourseAccess(req.user, securedExam.course))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
-  let attempt = await ExamAttempt.findOne({ exam: req.params.id, student: req.user.id, status: 'in-progress' });
-  if (!attempt) attempt = await ExamAttempt.create({ exam: req.params.id, student: req.user.id });
+  if (!(await requireBatchAccess(req.user, securedExam.course, securedExam.batch))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
   const exam = await Exam.findById(req.params.id).select('-questions.answer');
+  const now = new Date();
+  if (exam.startsAt && exam.startsAt > now) return res.status(403).json({ message: 'Exam has not started yet' });
+  if (exam.endsAt && exam.endsAt < now) return res.status(403).json({ message: 'Exam has ended' });
+  if (!exam.published) return res.status(403).json({ message: 'Exam is not available' });
+  let attempt = await ExamAttempt.findOne({ exam: req.params.id, student: req.user.id, status: 'in-progress' });
+  if (!attempt) attempt = await ExamAttempt.create({ exam: req.params.id, student: req.user.id, startedAt: now });
   res.json({ attempt, exam });
 });
+api.patch('/exams/:id/attempt', requireAuth, allow('student'), async (req, res) => {
+  const exam = await Exam.findById(req.params.id).select('course batch questions duration');
+  if (!exam || !await requireBatchAccess(req.user, exam.course, exam.batch)) return res.status(403).json({ message: 'Exam access denied' });
+  const attempt = await ExamAttempt.findOne({ exam: exam.id, student: req.user.id, status: 'in-progress' });
+  if (!attempt) return res.status(404).json({ message: 'Active attempt not found' });
+  if (!Array.isArray(req.body.answers)) return res.status(400).json({ message: 'Answers must be a list' });
+  const validQuestions = new Set(exam.questions.map(q => String(q._id)));
+  attempt.answers = req.body.answers.filter(a => validQuestions.has(String(a.question))).map(a => ({ question: a.question, value: a.value, marked: Boolean(a.marked) }));
+  await attempt.save();
+  res.json({ answers: attempt.answers });
+});
+
 api.post('/exams/:id/submit', requireAuth, allow('student'), async (req, res) => {
   const exam = await Exam.findById(req.params.id);
   if (!exam) return res.status(404).json({ message: 'Exam not found' });
-  if (!(await requireCourseAccess(req.user, exam.course))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
+  if (!(await requireBatchAccess(req.user, exam.course, exam.batch))) return res.status(403).json({ message: 'Purchase this course to access its exams' });
+  const activeAttempt = await ExamAttempt.findOne({ exam: exam.id, student: req.user.id, status: 'in-progress' });
+  if (!activeAttempt) return res.status(409).json({ message: 'No active attempt. Start the exam first.' });
   let score = 0, correct = 0, wrong = 0, unanswered = 0;
-  const answers = req.body.answers || [];
+  const answers = Array.isArray(req.body.answers) ? req.body.answers : activeAttempt.answers;
   exam.questions.forEach((q) => {
     const given = answers.find((a) => String(a.question) === String(q._id));
     if (!given || given.value === '' || given.value == null) unanswered += 1;
@@ -137,19 +227,22 @@ api.post('/exams/:id/submit', requireAuth, allow('student'), async (req, res) =>
   score = Math.max(0, score);
   const percentage = exam.totalMarks ? Math.round((score / exam.totalMarks) * 10000) / 100 : 0;
   const attempt = await ExamAttempt.findOneAndUpdate(
-    { exam: exam.id, student: req.user.id },
+    { _id: activeAttempt.id, student: req.user.id, status: 'in-progress' },
     { answers, score, correct, wrong, unanswered, percentage, status: 'submitted', submittedAt: new Date() },
-    { new: true, upsert: true },
+    { new: true },
   );
+  if (!attempt) return res.status(409).json({ message: 'Exam was already submitted' });
+  await refreshCourseProgress(req.user.id, String(exam.course));
   res.json(attempt);
 });
 api.get('/results', requireAuth, async (req, res) => {
-  const query = req.user.role === 'student' ? { student: req.user.id } : {};
+  const query: any = req.user.role === 'student' ? { student: req.user.id } : req.user.role === 'guardian' ? { student: req.user.guardianOf } : {};
+  if (req.user.role === 'teacher') query.exam = { $in: await Exam.find({ course: { $in: await managedCourseIds(req.user) }, $or: await teacherBatchScope(req.user) }).distinct('_id') };
   res.json(await ExamAttempt.find({ ...query, status: { $ne: 'in-progress' } }).populate('exam', 'title subject totalMarks passMarks').populate('student', 'name studentId').sort({ submittedAt: -1 }));
 });
 
 api.get('/qa', requireAuth, async (req, res) => {
-  const query = req.user.role === 'student' ? { student: req.user.id } : {};
+  const query: any = req.user.role === 'student' ? { student: req.user.id } : req.user.role === 'guardian' ? { student: req.user.guardianOf } : req.user.role === 'teacher' ? { course: { $in: await managedCourseIds(req.user) } } : {};
   res.json(await QA.find(query).populate('student teacher', 'name').populate('course', 'title').sort({ createdAt: -1 }));
 });
 api.post('/qa', requireAuth, allow('student'), async (req, res) => {
@@ -157,6 +250,9 @@ api.post('/qa', requireAuth, allow('student'), async (req, res) => {
   res.status(201).json(await QA.create({ ...req.body, student: req.user.id }));
 });
 api.patch('/qa/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  const question = await QA.findById(req.params.id);
+  if (!question) return res.status(404).json({ message: 'Question not found' });
+  if (!await canManageCourse(req.user, question.course)) return res.status(403).json({ message: 'Not assigned to this course' });
   const update = { ...req.body, teacher: req.user.id };
   if (req.body.answer) update.$push = { answers: { author: req.user.id, body: req.body.answer } };
   delete update.answer;
@@ -184,24 +280,33 @@ Object.entries(resources).forEach(([name, resource]) => {
     const query: any = {};
     const subjectStudent = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
     if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
-    if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.course = { $in: await enrolledCourseIds(req.user) };
+    if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); if (name === 'notebooks') query.status = { $in: ['live', 'saved'] }; }
+    if (['routines', 'notebooks'].includes(name) && req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
     if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
     let cursor = resource.model.find(query).sort({ createdAt: -1 });
     if (name === 'payments') cursor = cursor.populate('student', 'name email phone').populate('course', 'title price');
     res.json(await cursor);
   });
-  api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => res.status(201).json(await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) })));
+  api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => {
+    if (name === 'notebooks' && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch))) return res.status(403).json({ message: 'Course assignment invalid' });
+    res.status(201).json(await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) }));
+  });
   api.patch(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => {
-    const updated = await resource.model.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (name === 'notebooks') {
+      const note = await Notebook.findById(req.params.id);
+      if (!note) return res.status(404).json({ message: 'Notebook not found' });
+      if (!await canManageBatch(req.user, note.course, note.batch) || !await canManageBatch(req.user, req.body.course || note.course, req.body.batch || note.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
+    }
+    const updated = await resource.model.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (name === 'payments' && updated?.status === 'paid') {
       await Enrollment.findOneAndUpdate({ student: updated.student, course: updated.course }, { status: 'active' }, { upsert: true, new: true });
     }
     res.json(updated);
   });
-  api.delete(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => { await resource.model.findByIdAndDelete(req.params.id); res.status(204).end(); });
+  api.delete(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => { const record = await resource.model.findById(req.params.id); if (!record) return res.status(404).json({ message: 'Resource not found' }); if (name === 'notebooks' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); if (req.user.role === 'teacher' && name !== 'notebooks' && name !== 'routines' && name !== 'attendance') return res.status(403).json({ message: 'Not permitted' }); if (req.user.role === 'teacher' && name === 'routines' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); if (req.user.role === 'teacher' && name === 'attendance' && String(record.markedBy) !== String(req.user.id)) return res.status(403).json({ message: 'Not permitted' }); await record.deleteOne(); res.status(204).end(); });
 });
 
-api.post('/enrollments/:id/progress', requireAuth, allow('student'), async (req, res) => res.json(await Enrollment.findOneAndUpdate({ _id: req.params.id, student: req.user.id }, { progress: req.body.progress, $addToSet: { completedContent: req.body.content } }, { new: true })));
+api.post('/enrollments/:id/progress', requireAuth, allow('student'), (_req, res) => res.status(410).json({ message: 'Course progress is calculated from completed lessons and exams' }));
 api.get('/analytics/me', requireAuth, async (req, res) => {
   const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
   const [results, attendance, enrollments] = await Promise.all([ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student })]);
@@ -219,8 +324,8 @@ api.get('/search', requireAuth, async (req, res) => {
   if (!term) return res.json([]);
   const rx = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   const restricted = ['student', 'guardian'].includes(req.user.role);
-  const courseIds = restricted ? await enrolledCourseIds(req.user) : [];
-  const courseScope = restricted ? { course: { $in: courseIds } } : {};
+  const courseIds = restricted ? await enrolledCourseIds(req.user) : req.user.role === 'teacher' ? await managedCourseIds(req.user) : [];
+  const courseScope = restricted ? { course: { $in: courseIds }, $or: await studentBatchScope(req.user) } : req.user.role === 'teacher' ? { course: { $in: courseIds }, $or: await teacherBatchScope(req.user) } : {};
   const [courses, content, notebooks, exams, qa] = await Promise.all([
     Course.find({ $or: [{ title: rx }, { summary: rx }] }).limit(8),
     Content.find({ ...courseScope, $or: [{ title: rx }, { description: rx }, { subject: rx }, { chapter: rx }] }).limit(8),

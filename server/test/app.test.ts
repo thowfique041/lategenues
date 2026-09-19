@@ -17,3 +17,8 @@ test('protected dashboard rejects anonymous access', async () => {
 test('uploads require authentication', async () => {
   await request(app).post('/api/uploads').expect(401);
 });
+
+test('course room and progress require authentication', async () => {
+  await request(app).get('/api/courses/507f1f77bcf86cd799439011/room').expect(401);
+  await request(app).patch('/api/courses/507f1f77bcf86cd799439011/content/507f1f77bcf86cd799439012/progress').send({ completed: true }).expect(401);
+});

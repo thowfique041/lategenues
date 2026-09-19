@@ -18,3 +18,10 @@ export async function uploadFile(file: File) {
   if (!response.ok) throw new Error(data.message || 'Upload failed');
   return data;
 }
+
+export async function contentFileUrl(id: string) {
+  const token = localStorage.getItem('lg_token');
+  const response = await fetch(`${BASE}/content/${id}/file`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error('This file is unavailable or access is denied');
+  return URL.createObjectURL(await response.blob());
+}

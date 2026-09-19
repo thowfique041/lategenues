@@ -12,7 +12,7 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: config.clientUrl.split(',').map(x => x.trim()), credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan(process.env.NODE_ENV === 'test' ? 'tiny' : 'dev'));
-app.use('/uploads', express.static(path.resolve('uploads')));
+// Uploaded files are served only through authenticated course-content routes.
 app.use('/api', api);
 if (process.env.NODE_ENV === 'production') {
   const clientDist = [path.resolve('client/dist'), path.resolve('../client/dist')].find(existsSync) || path.resolve('client/dist');
