@@ -42,7 +42,7 @@ after(async () => {
     ExamAttempt.deleteMany({ student: { $in: ids } }), Attendance.deleteMany({ student: { $in: ids } }), LessonProgress.deleteMany({ student: { $in: ids } }),
     Enrollment.deleteMany({ student: { $in: ids } }), Payment.deleteMany({ student: { $in: ids } }),
     QA.deleteMany({ student: { $in: ids } }), Complaint.deleteMany({ author: { $in: ids } }),
-    Notification.deleteMany({ title: { $regex: `^${tag}` } }), Notebook.deleteMany({ title: { $regex: `^${tag}` } }),
+    Notification.deleteMany({ course: { $in: courseIds } }), Notebook.deleteMany({ title: { $regex: `^${tag}` } }),
     Routine.deleteMany({ course: { $in: courseIds } }), Content.deleteMany({ course: { $in: courseIds } }),
     Exam.deleteMany({ course: { $in: courseIds } }), Batch.deleteMany({ course: { $in: courseIds } }), Chapter.deleteMany({ course: { $in: courseIds } }), Subject.deleteMany({ course: { $in: courseIds } }),
     Course.deleteMany({ _id: { $in: courseIds } }), Setting.deleteMany({ key: `${tag}-setting` }), User.deleteMany({ _id: { $in: ids } }),
@@ -66,6 +66,8 @@ suite('all core features work with role permissions', async () => {
   const lesson = await request(app).post('/api/content').set('Authorization', `Bearer ${teacherToken}`).send({ type: 'recording', title: `${tag} Video`, course: courseId, subjectId: subject.body._id, chapterId: chapter.body._id, url: 'https://youtu.be/dQw4w9WgXcQ' }).expect(201);
   const lockedContent = await request(app).get(`/api/content/${lesson.body._id}`).set('Authorization', `Bearer ${registeredToken}`).expect(403);
   assert.match(lockedContent.body.message, /Purchase/);
+  const beforePurchase = await request(app).get('/api/notifications').set('Authorization', `Bearer ${registeredToken}`).expect(200);
+  assert.equal(beforePurchase.body.length, 0, 'unpaid student must not receive private course updates');
   const order = await request(app).post(`/api/courses/${courseId}/order`).set('Authorization', `Bearer ${registeredToken}`).send({ method: 'manual' }).expect(201);
   assert.equal(order.body.enrolled, false);
   await request(app).patch(`/api/payments/${order.body.payment._id}`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'paid' }).expect(200);
@@ -103,14 +105,30 @@ suite('all core features work with role permissions', async () => {
   const guardianPayments = await request(app).get('/api/payments').set('Authorization', `Bearer ${guardianToken}`).expect(200);
   assert.ok(guardianPayments.body.every((x: any) => x.student?._id === String(student.id)));
 
-  await request(app).post('/api/notifications').set('Authorization', `Bearer ${adminToken}`).send({ role: 'student', title: `${tag} Notice`, message: 'Test' }).expect(201);
+  const announcement = await request(app).post('/api/course-announcements').set('Authorization', `Bearer ${teacherToken}`).send({ course: courseId, batch: batchId, title: `${tag} Notice`, message: 'Tomorrow at 8 PM' }).expect(201);
+  assert.equal(announcement.body.delivered, 1, 'batch notice goes only to matching enrolled students');
   const notifications = await request(app).get('/api/notifications').set('Authorization', `Bearer ${studentToken}`).expect(200);
-  assert.ok(notifications.body.some((x: any) => x.title === `${tag} Notice`));
+  const notice = notifications.body.find((x: any) => x.title === `${tag} Notice`);
+  assert.ok(notice && !notice.read);
+  const otherBatchNotifications = await request(app).get('/api/notifications').set('Authorization', `Bearer ${registeredToken}`).expect(200);
+  assert.ok(!otherBatchNotifications.body.some((x: any) => x.title === `${tag} Notice`));
+  await request(app).patch(`/api/notifications/${notice._id}/read`).set('Authorization', `Bearer ${registeredToken}`).expect(404);
+  const read = await request(app).patch(`/api/notifications/${notice._id}/read`).set('Authorization', `Bearer ${studentToken}`).expect(200);
+  assert.equal(read.body.read, true);
+  const report = await request(app).get(`/api/courses/${courseId}/notification-report`).set('Authorization', `Bearer ${teacherToken}`).expect(200);
+  assert.equal(report.body.active, 1);
+  assert.ok(report.body.notifications.some((x: any) => x._id === notice._id && x.read));
+  await Enrollment.updateOne({ student: student.id, course: courseId }, { status: 'expired' });
+  const afterExpiry = await request(app).post('/api/course-announcements').set('Authorization', `Bearer ${teacherToken}`).send({ course: courseId, batch: batchId, title: `${tag} Later`, message: 'Only active students' }).expect(201);
+  assert.equal(afterExpiry.body.delivered, 0);
+  const hidden = await request(app).get('/api/notifications').set('Authorization', `Bearer ${studentToken}`).expect(200);
+  assert.equal(hidden.body.length, 0, 'expired student must not see private notifications');
+  await request(app).get(`/api/content/${lesson.body._id}`).set('Authorization', `Bearer ${studentToken}`).expect(403);
 
   await request(app).put(`/api/settings/${tag}-setting`).set('Authorization', `Bearer ${adminToken}`).send({ value: 'working' }).expect(200);
   const settings = await request(app).get('/api/settings/public').expect(200);
   assert.equal(settings.body[`${tag}-setting`], 'working');
-  const search = await request(app).get(`/api/search?q=${encodeURIComponent(tag)}`).set('Authorization', `Bearer ${studentToken}`).expect(200);
+  const search = await request(app).get(`/api/search?q=${encodeURIComponent(tag)}`).set('Authorization', `Bearer ${registeredToken}`).expect(200);
   assert.ok(search.body.length >= 3);
 
   const upload = await request(app).post('/api/uploads').set('Authorization', `Bearer ${teacherToken}`).attach('file', Buffer.from('%PDF-1.4\n%%EOF'), { filename: `${tag}.pdf`, contentType: 'application/pdf' }).expect(201);

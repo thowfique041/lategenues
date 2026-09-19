@@ -61,7 +61,9 @@ const enrollmentSchema = new Schema({
   completedContent: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
   lastContent: { type: Schema.Types.ObjectId, ref: 'Content' },
   lastActivity: Date,
-  status: { type: String, enum: ['active', 'completed', 'expired'], default: 'active' },
+  status: { type: String, enum: ['active', 'completed', 'expired', 'cancelled'], default: 'active' },
+  paymentStatus: { type: String, enum: ['free', 'paid', 'admin'], default: 'admin' },
+  expiresAt: Date,
 }, options);
 
 const contentSchema = new Schema({
@@ -170,14 +172,18 @@ const qaSchema = new Schema({
 }, options);
 
 const notificationSchema = new Schema({
-  user: { type: Schema.Types.ObjectId, ref: 'User' },
-  role: String,
-  type: String,
+  user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  course: { type: Schema.Types.ObjectId, ref: 'Course', required: true, index: true },
+  batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
+  relatedContent: { type: Schema.Types.ObjectId },
+  type: { type: String, required: true },
   title: { type: String, required: true },
   message: String,
   url: String,
   read: { type: Boolean, default: false },
+  readAt: Date,
 }, options);
+notificationSchema.index({ user: 1, course: 1, createdAt: -1 });
 
 const paymentSchema = new Schema({
   student: { type: Schema.Types.ObjectId, ref: 'User', required: true },

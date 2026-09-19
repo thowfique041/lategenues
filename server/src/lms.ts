@@ -2,7 +2,8 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { Attendance, Batch, Chapter, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, QA, Subject } from './models.js';
+import { Attendance, Batch, Chapter, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, QA, Subject, Notification } from './models.js';
+import { activeEnrollment } from './notifications.js';
 
 export const lms = Router();
 const id = (value: unknown) => typeof value === 'string' && mongoose.isValidObjectId(value);
@@ -18,7 +19,7 @@ async function scope(user, courseId: string) {
     return lead || batches.length ? { course, enrollment: null, batchIds: lead ? null : batches } : false;
   }
   const student = user.role === 'guardian' ? user.guardianOf : user.id;
-  const enrollment = await Enrollment.findOne({ student, course: courseId, status: { $in: ['active', 'completed'] } });
+  const enrollment = await Enrollment.findOne({ student, course: courseId, ...activeEnrollment() });
   if (!enrollment) return false;
   return { course, enrollment, batchIds: enrollment.batch ? [enrollment.batch] : null };
 }
@@ -28,7 +29,7 @@ const subjectInput = z.object({ name: z.string().trim().min(2).max(100), batchId
 const chapterInput = z.object({ subjectId: z.string(), title: z.string().trim().min(2).max(150), order: z.number().int().min(0).optional(), active: z.boolean().optional() });
 
 export async function refreshCourseProgress(student: string, course: string) {
-  const enrollment = await Enrollment.findOne({ student, course, status: { $in: ['active', 'completed'] } });
+  const enrollment = await Enrollment.findOne({ student, course, ...activeEnrollment() });
   if (!enrollment) return 0;
   const batch = enrollment.batch ? { $or: [{ batch: enrollment.batch }, { batch: null }] } : { batch: null };
   const [content, exams] = await Promise.all([
@@ -64,7 +65,7 @@ lms.get('/courses/:courseId/room', requireAuth, async (req, res) => {
     QA.find({ course: courseId, ...(['student', 'guardian'].includes(req.user.role) ? { student: req.user.role === 'guardian' ? req.user.guardianOf : req.user.id } : {}) }).populate('student teacher', 'name').sort({ createdAt: -1 }),
   ]);
   const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
-  const classEnrollments = access.enrollment ? [] : await Enrollment.find({ course: courseId, ...(access.batchIds ? { batch: { $in: access.batchIds } } : {}), status: { $in: ['active','completed'] } }).populate('student', 'name').select('student progress lastActivity').sort({ lastActivity: -1 });
+  const classEnrollments = access.enrollment ? [] : await Enrollment.find({ course: courseId, ...(access.batchIds ? { batch: { $in: access.batchIds } } : {}), ...activeEnrollment() }).populate('student', 'name').select('student progress lastActivity').sort({ lastActivity: -1 });
   const [lessonProgress, attempts, attendance] = access.enrollment ? await Promise.all([
     LessonProgress.find({ student, course: courseId }),
     ExamAttempt.find({ student, exam: { $in: exams.map(x => x.id) }, status: { $in: ['submitted', 'reviewed'] } }).populate('exam', 'title subject subjectId chapterId totalMarks passMarks'),
@@ -86,7 +87,8 @@ lms.get('/courses/:courseId/room', requireAuth, async (req, res) => {
     const complete = lessons.filter(x => completed.has(String(x.id))).length + chapterExams.filter(x => examDone.has(String(x.id))).length;
     return { chapterId: chapter.id, completed: complete, total: count, percentage: count ? Math.round(complete / count * 100) : 0 };
   });
-  res.json({ course: access.course, enrollment: access.enrollment, classEnrollments, batches, subjects, chapters, content, notebooks, exams, qa, lessonProgress, attempts, attendance, progress: { overall, completed: done, total, chapterProgress, continueContent, positionSeconds: recent?.positionSeconds || 0 } });
+  const updates = access.enrollment ? await Notification.find({ user: student, course: courseId, ...batchFilter(access) }).sort({ createdAt: -1 }).limit(12) : [];
+  res.json({ course: access.course, enrollment: access.enrollment, updates, classEnrollments, batches, subjects, chapters, content, notebooks, exams, qa, lessonProgress, attempts, attendance, progress: { overall, completed: done, total, chapterProgress, continueContent, positionSeconds: recent?.positionSeconds || 0 } });
 });
 
 lms.post('/courses/:courseId/subjects', requireAuth, async (req, res) => {

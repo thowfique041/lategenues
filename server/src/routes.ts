@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
@@ -7,6 +8,7 @@ import { z } from 'zod';
 import { allow, optionalAuth, requireAuth, signToken } from './auth.js';
 import { Attendance, Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from './models.js';
 import { lms, refreshCourseProgress } from './lms.js';
+import { activeEnrollment, deliverCourseUpdate } from './notifications.js';
 
 export const api = Router();
 api.use(lms);
@@ -17,12 +19,13 @@ const profileSchema = z.object({ name: z.string().min(2), phone: z.string().max(
 const courseSchema = z.object({ title: z.string().min(2), slug: z.string().min(2).regex(/^[a-z0-9-]+$/), summary: z.string().optional(), category: z.enum(['academic','admission']).optional(), classLevel: z.string().optional(), subjects: z.array(z.string()).optional(), group: z.string().optional(), duration: z.string().optional(), instructor: z.string().optional(), price: z.number().nonnegative().optional(), thumbnail: z.string().optional(), featured: z.boolean().optional(), published: z.boolean().optional() });
 const userCreateSchema = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['admin','teacher','student','guardian']), phone: z.string().optional(), classLevel: z.string().optional(), studentId: z.string().optional(), group: z.string().optional(), guardianOf: z.string().optional() });
 const studentId = (user) => user.role === 'guardian' ? user.guardianOf : user.id;
-const enrolledCourseIds = async (user) => Enrollment.find({ student: studentId(user), status: { $in: ['active', 'completed'] } }).distinct('course');
-const requireCourseAccess = async (user, course) => user.role === 'admin' || (user.role === 'teacher' ? await canManageCourse(user, course) : Boolean(course && await Enrollment.exists({ student: studentId(user), course, status: { $in: ['active', 'completed'] } })));
-const requireBatchAccess = async (user, course, batch) => !await requireCourseAccess(user, course) ? false : user.role === 'teacher' ? (!batch || await canManageBatch(user, course, batch)) : !batch || !['student','guardian'].includes(user.role) || Boolean(await Enrollment.exists({ student: studentId(user), course, batch, status: { $in: ['active','completed'] } }));
+const enrolledCourseIds = async (user) => Enrollment.find({ student: studentId(user), ...activeEnrollment() }).distinct('course');
+const requireCourseAccess = async (user, course) => user.role === 'admin' || (user.role === 'teacher' ? await canManageCourse(user, course) : Boolean(course && await Enrollment.exists({ student: studentId(user), course, ...activeEnrollment() })));
+const requireBatchAccess = async (user, course, batch) => !await requireCourseAccess(user, course) ? false : user.role === 'teacher' ? (!batch || await canManageBatch(user, course, batch)) : !batch || !['student','guardian'].includes(user.role) || Boolean(await Enrollment.exists({ student: studentId(user), course, batch, ...activeEnrollment() }));
 const studentBatchScope = async (user) => {
-  const enrollments = await Enrollment.find({ student: studentId(user), status: { $in: ['active','completed'] } }).select('course batch');
-  return enrollments.flatMap(x => x.batch ? [{ course: x.course, batch: x.batch }, { course: x.course, batch: null }] : [{ course: x.course, batch: null }]);
+  const enrollments = await Enrollment.find({ student: studentId(user), ...activeEnrollment() }).select('course batch');
+  const clauses = enrollments.flatMap(x => x.batch ? [{ course: x.course, batch: x.batch }, { course: x.course, batch: null }] : [{ course: x.course, batch: null }]);
+  return clauses.length ? clauses : [{ course: null }];
 };
 const managedCourseIds = async (user) => {
   const direct = await Course.find({ instructor: user.id }).distinct('_id');
@@ -109,10 +112,10 @@ api.delete('/courses/:id', requireAuth, allow('admin'), async (req, res) => { aw
 api.post('/courses/:id/order', requireAuth, allow('student'), async (req, res) => {
   const course = await Course.findById(req.params.id);
   if (!course?.published) return res.status(404).json({ message: 'Course not found' });
-  const existing = await Enrollment.findOne({ student: req.user.id, course: course.id, status: { $in: ['active', 'completed'] } });
+  const existing = await Enrollment.findOne({ student: req.user.id, course: course.id, ...activeEnrollment() });
   if (existing) return res.json({ enrolled: true, message: 'You already have access to this course' });
   if (course.price === 0) {
-    await Enrollment.findOneAndUpdate({ student: req.user.id, course: course.id }, { status: 'active' }, { upsert: true, new: true });
+    await Enrollment.findOneAndUpdate({ student: req.user.id, course: course.id }, { status: 'active', paymentStatus: 'free', $unset: { expiresAt: '' } }, { upsert: true, new: true });
     return res.status(201).json({ enrolled: true, message: 'Free course added to your dashboard' });
   }
   const payment = await Payment.findOneAndUpdate(
@@ -135,13 +138,13 @@ api.get('/content', optionalAuth, async (req, res) => {
 api.get('/content/:id', requireAuth, async (req, res) => {
   const item = await Content.findById(req.params.id).populate('course', 'title').populate('teacher', 'name');
   if (!item || (!item.published && ['student','guardian'].includes(req.user.role))) return res.status(404).json({ message: 'Content not found' });
-  if (item.type !== 'notice' && !(await requireBatchAccess(req.user, item.course?._id || item.course, item.batch))) return res.status(403).json({ message: 'Purchase this course to access its content' });
+  if (item.course && !(await requireBatchAccess(req.user, item.course?._id || item.course, item.batch))) return res.status(403).json({ message: 'Purchase this course to access its content' });
   res.json(item);
 });
 api.get('/content/:id/file', requireAuth, async (req, res) => {
   const item = await Content.findById(req.params.id);
   if (!item || !item.url?.startsWith('/uploads/') || (!item.published && ['student','guardian'].includes(req.user.role))) return res.status(404).json({ message: 'File not found' });
-  if (item.type !== 'notice' && !await requireBatchAccess(req.user, item.course, item.batch)) return res.status(403).json({ message: 'Course access required' });
+  if (item.course && !await requireBatchAccess(req.user, item.course, item.batch)) return res.status(403).json({ message: 'Course access required' });
   if (req.query.download === 'true' && !item.downloadable) return res.status(403).json({ message: 'Download is disabled for this file' });
   const filename = path.basename(item.url);
   res.setHeader('Content-Disposition', item.downloadable && req.query.download === 'true' ? `attachment; filename="${filename}"` : `inline; filename="${filename}"`);
@@ -149,25 +152,32 @@ api.get('/content/:id/file', requireAuth, async (req, res) => {
 });
 
 api.post('/content', requireAuth, allow('admin', 'teacher'), async (req, res) => {
-  if (req.body.type !== 'notice' && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch))) return res.status(403).json({ message: 'Assign a valid course, subject and chapter you manage' });
-  res.status(201).json(await Content.create({ ...req.body, teacher: req.user.id }));
+  if ((!req.body.course && (req.user.role !== 'admin' || req.body.type !== 'notice')) || (req.body.course && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch)))) return res.status(403).json({ message: 'Assign a valid course, subject and chapter you manage' });
+  const item = await Content.create({ ...req.body, published: req.body.status === 'draft' ? false : req.body.published, teacher: req.user.id });
+  if (item.course && item.published) await deliverCourseUpdate({ course: item.course, batch: item.batch, type: String(item.type).toUpperCase().replace('-', '_'), title: item.type === 'notice' ? 'New course notice' : `New ${item.type.replace('-', ' ')} added`, message: item.title, relatedContent: item.id, url: `/learn/${item.id}` });
+  res.status(201).json(item);
 });
 api.patch('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
   const item = await Content.findById(req.params.id);
   if (!item) return res.status(404).json({ message: 'Content not found' });
-  const course = req.body.course || item.course;
-  if (item.type !== 'notice' && (!await canManageBatch(req.user, item.course, item.batch) || !await canManageBatch(req.user, course, req.body.batch || item.batch) || !await validCourseLinks({ ...item.toObject(), ...req.body, course }))) return res.status(403).json({ message: 'Course assignment invalid' });
-  res.json(await Content.findByIdAndUpdate(item.id, req.body, { new: true, runValidators: true }));
+  if (req.body.course !== undefined && String(req.body.course) !== String(item.course || '')) return res.status(400).json({ message: 'Course cannot be changed after creation' });
+  const course = item.course;
+  if (!item.course && req.user.role !== 'admin') return res.status(403).json({ message: 'Not permitted' });
+  if (item.course && (!await canManageBatch(req.user, item.course, item.batch) || !await canManageBatch(req.user, course, req.body.batch || item.batch) || !await validCourseLinks({ ...item.toObject(), ...req.body, course }))) return res.status(403).json({ message: 'Course assignment invalid' });
+  const update = { ...req.body, ...(req.body.status === 'draft' ? { published: false } : req.body.status === 'published' ? { published: true } : {}) };
+  const updated = await Content.findByIdAndUpdate(item.id, update, { new: true, runValidators: true });
+  if (updated?.course && updated.published && Object.keys(req.body).length > 0) await deliverCourseUpdate({ course: updated.course, batch: updated.batch, type: String(updated.type).toUpperCase().replace('-', '_'), title: `Updated ${updated.type.replace('-', ' ')}`, message: updated.title, relatedContent: updated.id, url: `/learn/${updated.id}` });
+  res.json(updated);
 });
 api.delete('/content/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
   const item = await Content.findById(req.params.id);
   if (!item) return res.status(404).json({ message: 'Content not found' });
-  if (item.type !== 'notice' && !await canManageBatch(req.user, item.course, item.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
+  if ((!item.course && req.user.role !== 'admin') || (item.course && !await canManageBatch(req.user, item.course, item.batch))) return res.status(403).json({ message: 'Course assignment invalid' });
   await item.deleteOne(); res.status(204).end();
 });
 
 api.get('/exams', requireAuth, async (req, res) => {
-  const projection = req.user.role === 'student' ? '-questions.answer' : '';
+  const projection = ['student', 'guardian'].includes(req.user.role) ? '-questions.answer' : '';
   const query: any = { published: true };
   if (['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); }
   else if (req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
@@ -175,14 +185,19 @@ api.get('/exams', requireAuth, async (req, res) => {
 });
 api.post('/exams', requireAuth, allow('admin', 'teacher'), async (req, res) => {
   if (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
-  res.status(201).json(await Exam.create(req.body));
+  const exam = await Exam.create(req.body);
+  if (exam.published) await deliverCourseUpdate({ course: exam.course, batch: exam.batch, type: 'EXAM', title: 'New course exam', message: exam.title, relatedContent: exam.id, url: `/exam/${exam.id}` });
+  res.status(201).json(exam);
 });
 api.patch('/exams/:id', requireAuth, allow('admin', 'teacher'), async (req, res) => {
   const exam = await Exam.findById(req.params.id);
   if (!exam) return res.status(404).json({ message: 'Exam not found' });
-  const course = req.body.course || exam.course;
+  if (req.body.course !== undefined && String(req.body.course) !== String(exam.course)) return res.status(400).json({ message: 'Course cannot be changed after creation' });
+  const course = exam.course;
   if (!await canManageBatch(req.user, exam.course, exam.batch) || !await canManageBatch(req.user, course, req.body.batch || exam.batch) || !await validCourseLinks({ ...exam.toObject(), ...req.body, course })) return res.status(403).json({ message: 'Course assignment invalid' });
-  res.json(await Exam.findByIdAndUpdate(exam.id, req.body, { new: true, runValidators: true }));
+  const updated = await Exam.findByIdAndUpdate(exam.id, req.body, { new: true, runValidators: true });
+  if (updated?.published && Object.keys(req.body).length > 0) await deliverCourseUpdate({ course: updated.course, batch: updated.batch, type: 'EXAM', title: 'Course exam updated', message: updated.title, relatedContent: updated.id, url: `/exam/${updated.id}` });
+  res.json(updated);
 });
 
 api.post('/exams/:id/start', requireAuth, allow('student'), async (req, res) => {
@@ -237,12 +252,13 @@ api.post('/exams/:id/submit', requireAuth, allow('student'), async (req, res) =>
 });
 api.get('/results', requireAuth, async (req, res) => {
   const query: any = req.user.role === 'student' ? { student: req.user.id } : req.user.role === 'guardian' ? { student: req.user.guardianOf } : {};
+  if (['student','guardian'].includes(req.user.role)) query.exam = { $in: await Exam.find({ course: { $in: await enrolledCourseIds(req.user) }, $or: await studentBatchScope(req.user) }).distinct('_id') };
   if (req.user.role === 'teacher') query.exam = { $in: await Exam.find({ course: { $in: await managedCourseIds(req.user) }, $or: await teacherBatchScope(req.user) }).distinct('_id') };
   res.json(await ExamAttempt.find({ ...query, status: { $ne: 'in-progress' } }).populate('exam', 'title subject totalMarks passMarks').populate('student', 'name studentId').sort({ submittedAt: -1 }));
 });
 
 api.get('/qa', requireAuth, async (req, res) => {
-  const query: any = req.user.role === 'student' ? { student: req.user.id } : req.user.role === 'guardian' ? { student: req.user.guardianOf } : req.user.role === 'teacher' ? { course: { $in: await managedCourseIds(req.user) } } : {};
+  const query: any = req.user.role === 'student' ? { student: req.user.id, course: { $in: await enrolledCourseIds(req.user) } } : req.user.role === 'guardian' ? { student: req.user.guardianOf, course: { $in: await enrolledCourseIds(req.user) } } : req.user.role === 'teacher' ? { course: { $in: await managedCourseIds(req.user) } } : {};
   res.json(await QA.find(query).populate('student teacher', 'name').populate('course', 'title').sort({ createdAt: -1 }));
 });
 api.post('/qa', requireAuth, allow('student'), async (req, res) => {
@@ -266,13 +282,56 @@ api.get('/complaints', requireAuth, async (req, res) => {
 api.post('/complaints', requireAuth, allow('guardian', 'student'), async (req, res) => res.status(201).json(await Complaint.create({ ...req.body, author: req.user.id })));
 api.patch('/complaints/:id', requireAuth, allow('admin'), async (req, res) => res.json(await Complaint.findByIdAndUpdate(req.params.id, req.body, { new: true })));
 
+const announcementInput = z.object({ course: z.string(), batch: z.string().optional(), title: z.string().trim().min(3).max(150), message: z.string().trim().min(3).max(2000) });
+api.post('/course-announcements', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  const parsed = announcementInput.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0].message });
+  const { course, batch, title, message } = parsed.data;
+  if (!mongoose.isValidObjectId(course) || (batch && !mongoose.isValidObjectId(batch))) return res.status(400).json({ message: 'Valid course and batch required' });
+  if (!await canManageBatch(req.user, course, batch) || (batch && !await Batch.exists({ _id: batch, course }))) return res.status(403).json({ message: 'Course assignment invalid' });
+  const notice = await Content.create({ type: 'notice', course, batch: batch || null, title, description: message, published: true, teacher: req.user.id });
+  const delivered = await deliverCourseUpdate({ course, batch, type: 'ANNOUNCEMENT', title, message, relatedContent: notice.id, url: '/course/' + course + '?tab=updates' });
+  res.status(201).json({ notice, delivered });
+});
+api.get('/notifications', requireAuth, async (req, res) => {
+  if (req.user.role === 'admin') return res.json(await Notification.find({}).populate('course', 'title').populate('user', 'name email').sort({ createdAt: -1 }).limit(200));
+  if (req.user.role === 'teacher') {
+    const leadCourses = await Course.find({ instructor: req.user.id }).distinct('_id');
+    const assignedBatches = await Batch.find({ teachers: req.user.id, active: true }).distinct('_id');
+    const enrollments = await Enrollment.find({ $or: [{ course: { $in: leadCourses } }, { batch: { $in: assignedBatches } }] }).select('student course batch');
+    const allowed = enrollments.map(x => ({ user: x.student, course: x.course, $or: [{ batch: null }, ...(x.batch ? [{ batch: x.batch }] : [])] }));
+    if (!allowed.length) return res.json([]);
+    return res.json(await Notification.find({ $or: allowed }).populate('course', 'title').sort({ createdAt: -1 }).limit(200));
+  }
+  const enrollments = await Enrollment.find({ student: studentId(req.user), ...activeEnrollment() }).select('course batch');
+  const allowed = enrollments.map(x => ({ course: x.course, $or: [{ batch: null }, ...(x.batch ? [{ batch: x.batch }] : [])] }));
+  if (!allowed.length) return res.json([]);
+  res.json(await Notification.find({ user: studentId(req.user), $or: allowed }).populate('course', 'title').sort({ createdAt: -1 }).limit(100));
+});
+api.patch('/notifications/:id/read', requireAuth, allow('student'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Notification not found' });
+  const notice = await Notification.findOne({ _id: req.params.id, user: req.user.id });
+  if (!notice || !await requireBatchAccess(req.user, notice.course, notice.batch)) return res.status(404).json({ message: 'Notification not found' });
+  notice.read = true; notice.readAt = new Date(); await notice.save(); res.json(notice);
+});
+api.get('/courses/:id/notification-report', requireAuth, allow('admin', 'teacher'), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Course not found' });
+  if (!await canManageCourse(req.user, req.params.id)) return res.status(403).json({ message: 'Course assignment invalid' });
+  const lead = req.user.role === 'admin' || await Course.exists({ _id: req.params.id, instructor: req.user.id });
+  const assigned = lead ? [] : await Batch.find({ course: req.params.id, teachers: req.user.id, active: true }).distinct('_id');
+  const enrollments = await Enrollment.find({ course: req.params.id, ...(lead ? {} : { batch: { $in: assigned } }) }).select('student batch status expiresAt');
+  const allowed = enrollments.map(x => ({ user: x.student, $or: [{ batch: null }, ...(x.batch ? [{ batch: x.batch }] : [])] }));
+  const active = enrollments.filter(x => ['active','completed'].includes(x.status) && (!x.expiresAt || x.expiresAt > new Date())).length;
+  const expired = enrollments.length - active;
+  const notifications = allowed.length ? await Notification.find({ course: req.params.id, $or: allowed }).sort({ createdAt: -1 }).limit(200).select('user batch type title read createdAt').populate('user', 'name') : [];
+  res.json({ active, expired, notifications });
+});
 const resources: Record<string, { model: any; write: string[] }> = {
   batches: { model: Batch, write: ['admin'] },
   enrollments: { model: Enrollment, write: ['admin'] },
   routines: { model: Routine, write: ['admin', 'teacher'] },
   attendance: { model: Attendance, write: ['admin', 'teacher'] },
   notebooks: { model: Notebook, write: ['admin', 'teacher'] },
-  notifications: { model: Notification, write: ['admin', 'teacher'] },
   payments: { model: Payment, write: ['admin'] },
 };
 Object.entries(resources).forEach(([name, resource]) => {
@@ -282,24 +341,30 @@ Object.entries(resources).forEach(([name, resource]) => {
     if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
     if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); if (name === 'notebooks') query.status = { $in: ['live', 'saved'] }; }
     if (['routines', 'notebooks'].includes(name) && req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
-    if (name === 'notifications') { query.$or = [{ user: req.user.id }, { role: req.user.role }, { user: null, role: null }]; }
     let cursor = resource.model.find(query).sort({ createdAt: -1 });
     if (name === 'payments') cursor = cursor.populate('student', 'name email phone').populate('course', 'title price');
     res.json(await cursor);
   });
   api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => {
     if (name === 'notebooks' && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch))) return res.status(403).json({ message: 'Course assignment invalid' });
-    res.status(201).json(await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) }));
+    const created = await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) });
+    if (name === 'notebooks' && ['live', 'saved'].includes(created.status)) await deliverCourseUpdate({ course: created.course, batch: created.batch, type: 'NOTEBOOK', title: 'New live notebook', message: created.title, relatedContent: created.id, url: '/notebook/' + created.id });
+    res.status(201).json(created);
   });
   api.patch(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => {
     if (name === 'notebooks') {
       const note = await Notebook.findById(req.params.id);
       if (!note) return res.status(404).json({ message: 'Notebook not found' });
+      if (req.body.course !== undefined && String(req.body.course) !== String(note.course)) return res.status(400).json({ message: 'Course cannot be changed after creation' });
       if (!await canManageBatch(req.user, note.course, note.batch) || !await canManageBatch(req.user, req.body.course || note.course, req.body.batch || note.batch)) return res.status(403).json({ message: 'Course assignment invalid' });
     }
     const updated = await resource.model.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (name === 'notebooks' && updated && ['live', 'saved'].includes(updated.status) && Object.keys(req.body).length > 0) await deliverCourseUpdate({ course: updated.course, batch: updated.batch, type: 'NOTEBOOK', title: 'Live notebook updated', message: updated.title, relatedContent: updated.id, url: '/notebook/' + updated.id });
     if (name === 'payments' && updated?.status === 'paid') {
-      await Enrollment.findOneAndUpdate({ student: updated.student, course: updated.course }, { status: 'active' }, { upsert: true, new: true });
+      await Enrollment.findOneAndUpdate({ student: updated.student, course: updated.course }, { status: 'active', paymentStatus: 'paid', $unset: { expiresAt: '' } }, { upsert: true, new: true });
+    }
+    if (name === 'payments' && updated?.status === 'refunded' && !await Payment.exists({ student: updated.student, course: updated.course, status: 'paid', _id: { $ne: updated.id } })) {
+      await Enrollment.updateOne({ student: updated.student, course: updated.course, paymentStatus: 'paid' }, { status: 'cancelled' });
     }
     res.json(updated);
   });
@@ -309,7 +374,7 @@ Object.entries(resources).forEach(([name, resource]) => {
 api.post('/enrollments/:id/progress', requireAuth, allow('student'), (_req, res) => res.status(410).json({ message: 'Course progress is calculated from completed lessons and exams' }));
 api.get('/analytics/me', requireAuth, async (req, res) => {
   const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
-  const [results, attendance, enrollments] = await Promise.all([ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student })]);
+  const [results, attendance, enrollments] = await Promise.all([ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student, ...activeEnrollment() })]);
   const average = results.length ? Math.round(results.reduce((sum, item) => sum + item.percentage, 0) / results.length) : 0;
   const present = attendance.filter((item) => item.status === 'present').length;
   res.json({ average, exams: results.length, attendance: attendance.length ? Math.round((present / attendance.length) * 100) : 0, courseProgress: enrollments.length ? Math.round(enrollments.reduce((sum, item) => sum + item.progress, 0) / enrollments.length) : 0 });
@@ -328,10 +393,10 @@ api.get('/search', requireAuth, async (req, res) => {
   const courseScope = restricted ? { course: { $in: courseIds }, $or: await studentBatchScope(req.user) } : req.user.role === 'teacher' ? { course: { $in: courseIds }, $or: await teacherBatchScope(req.user) } : {};
   const [courses, content, notebooks, exams, qa] = await Promise.all([
     Course.find({ $or: [{ title: rx }, { summary: rx }] }).limit(8),
-    Content.find({ ...courseScope, $or: [{ title: rx }, { description: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
-    Notebook.find({ ...courseScope, $or: [{ title: rx }, { content: rx }, { subject: rx }, { chapter: rx }] }).limit(8),
-    Exam.find({ ...courseScope, $or: [{ title: rx }, { subject: rx }] }).limit(8),
-    QA.find({ ...(req.user.role === 'student' ? { student: req.user.id } : {}), question: rx }).limit(8),
+    Content.find({ $and: [courseScope, { $or: [{ title: rx }, { description: rx }, { subject: rx }, { chapter: rx }] }, restricted ? { published: true } : {}] }).limit(8),
+    Notebook.find({ $and: [courseScope, { $or: [{ title: rx }, { content: rx }, { subject: rx }, { chapter: rx }] }, restricted ? { status: { $in: ['live','saved'] } } : {}] }).limit(8),
+    Exam.find({ $and: [courseScope, { $or: [{ title: rx }, { subject: rx }] }, restricted ? { published: true } : {}] }).limit(8),
+    QA.find({ ...(restricted ? { student: studentId(req.user), course: { $in: courseIds } } : req.user.role === 'teacher' ? { course: { $in: courseIds } } : {}), question: rx }).limit(8),
   ]);
   res.json([...courses.map(x => ({ type: 'course', id: x.id, title: x.title })), ...content.map(x => ({ type: x.type, id: x.id, title: x.title })), ...notebooks.map(x => ({ type: 'notebook', id: x.id, title: x.title })), ...exams.map(x => ({ type: 'exam', id: x.id, title: x.title })), ...qa.map(x => ({ type: 'qa', id: x.id, title: x.question }))]);
 });
@@ -347,8 +412,8 @@ api.get('/dashboard', requireAuth, async (req, res) => {
     const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
     const courseIds = await enrolledCourseIds(req.user);
     const [results, attendanceRows, enrollments, upcoming] = await Promise.all([
-      ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student }),
-      Content.find({ type: 'live-class', course: { $in: courseIds }, startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
+      ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student, ...activeEnrollment() }),
+      Content.find({ type: 'live-class', course: { $in: courseIds }, $or: await studentBatchScope(req.user), published: true, startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
     ]);
     const present = attendanceRows.filter(x => x.status === 'present').length;
     response.student = { courseProgress: enrollments.length ? Math.round(enrollments.reduce((s,x)=>s+x.progress,0)/enrollments.length) : 0, examsCompleted: results.length, attendance: attendanceRows.length ? Math.round((present/attendanceRows.length)*100) : 0, upcoming };
