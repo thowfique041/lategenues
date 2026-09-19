@@ -1,13 +1,13 @@
-import { BookOpen, CalendarDays, CheckCircle2, CircleHelp, ClipboardCheck, FileText, MessageSquareWarning, PanelLeftClose, PanelLeftOpen, PlayCircle, TrendingUp, Users } from 'lucide-react';
+import { BookOpen, CalendarDays, CircleHelp, ClipboardCheck, FileText, MessageSquareWarning, PanelLeftClose, PanelLeftOpen, PlayCircle, TrendingUp, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 
 const roleMenus = {
-  admin: [['courses','Courses',BookOpen],['users','Users & guardians',Users],['batches','Batches',CalendarDays],['enrollments','Enrollments',Users],['classes','Classes',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['attendance','Attendance',CheckCircle2],['complaints','Complaints',MessageSquareWarning],['payments','Payments',FileText],['notifications','Notifications',FileText],['settings','Website content',FileText]],
-  teacher: [['courses','My courses',BookOpen],['classes','Classes',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['qa','Student Q&A',CircleHelp],['attendance','Attendance',CheckCircle2],['notifications','Notifications',FileText]],
-  student: [['courses','My courses',BookOpen],['classes','Live & recorded',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Online exams',ClipboardCheck],['qa','Teacher Q&A',CircleHelp],['results','Results',TrendingUp],['attendance','Attendance',CheckCircle2],['payments','Payments',FileText],['notifications','Notifications',FileText]],
-  guardian: [['progress','Student progress',TrendingUp],['attendance','Attendance',CheckCircle2],['results','Results',ClipboardCheck],['routine','Class routine',CalendarDays],['payments','Payments',FileText],['complaints','Complaints',MessageSquareWarning],['notices','Notices',FileText],['notifications','Notifications',FileText]],
+  admin: [['courses','Courses',BookOpen],['users','Users & guardians',Users],['batches','Batches',CalendarDays],['enrollments','Enrollments',Users],['classes','Classes',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['complaints','Complaints',MessageSquareWarning],['payments','Payments',FileText],['notifications','Notifications',FileText],['settings','Website content',FileText]],
+  teacher: [['courses','My courses',BookOpen],['classes','Classes',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials',FileText],['notebooks','Live notebooks',FileText],['exams','Exams',ClipboardCheck],['qa','Student Q&A',CircleHelp],['notifications','Notifications',FileText]],
+  student: [['courses','My courses',BookOpen],['classes','Live & recorded',PlayCircle],['routines','Class routine',CalendarDays],['materials','Materials & books',FileText],['notebooks','Live notebooks',FileText],['exams','Online exams',ClipboardCheck],['qa','Teacher Q&A',CircleHelp],['results','Results',TrendingUp],['payments','Payments',FileText],['notifications','Notifications',FileText]],
+  guardian: [['progress','Student progress',TrendingUp],['results','Results',ClipboardCheck],['routine','Class routine',CalendarDays],['payments','Payments',FileText],['complaints','Complaints',MessageSquareWarning],['notices','Notices',FileText],['notifications','Notifications',FileText]],
 };
 
 export function DashboardSidebar() {

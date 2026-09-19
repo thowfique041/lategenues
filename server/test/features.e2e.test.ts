@@ -8,7 +8,7 @@ import path from 'node:path';
 import { app } from '../src/app.js';
 import { config } from '../src/config.js';
 import { signToken } from '../src/auth.js';
-import { Attendance, Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from '../src/models.js';
+import { Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from '../src/models.js';
 
 const enabled = process.env.RUN_E2E === '1';
 const suite = enabled ? test : test.skip;
@@ -39,7 +39,7 @@ after(async () => {
   const courses = await Course.find({ title: { $regex: `^${tag}` } }).select('_id');
   const courseIds = courses.map(x => x._id);
   await Promise.all([
-    ExamAttempt.deleteMany({ student: { $in: ids } }), Attendance.deleteMany({ student: { $in: ids } }), LessonProgress.deleteMany({ student: { $in: ids } }),
+    ExamAttempt.deleteMany({ student: { $in: ids } }), LessonProgress.deleteMany({ student: { $in: ids } }),
     Enrollment.deleteMany({ student: { $in: ids } }), Payment.deleteMany({ student: { $in: ids } }),
     QA.deleteMany({ student: { $in: ids } }), Complaint.deleteMany({ author: { $in: ids } }),
     Notification.deleteMany({ course: { $in: courseIds } }), Notebook.deleteMany({ title: { $regex: `^${tag}` } }),
@@ -97,9 +97,6 @@ suite('all core features work with role permissions', async () => {
 
   const complaint = await request(app).post('/api/complaints').set('Authorization', `Bearer ${guardianToken}`).send({ subject: `${tag} Concern`, category: 'Class', message: 'Please review.' }).expect(201);
   await request(app).patch(`/api/complaints/${complaint.body._id}`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'resolved', reply: 'Resolved.' }).expect(200);
-  await request(app).post('/api/attendance').set('Authorization', `Bearer ${teacherToken}`).send({ student: student.id, batch: batchId, status: 'present' }).expect(201);
-  const guardianAttendance = await request(app).get('/api/attendance').set('Authorization', `Bearer ${guardianToken}`).expect(200);
-  assert.ok(guardianAttendance.body.every((x: any) => x.student === String(student.id)));
 
   await request(app).post('/api/payments').set('Authorization', `Bearer ${adminToken}`).send({ student: student.id, course: courseId, amount: 100, status: 'paid' }).expect(201);
   const guardianPayments = await request(app).get('/api/payments').set('Authorization', `Bearer ${guardianToken}`).expect(200);

@@ -12,7 +12,7 @@ const copy = {
   notices: ['Notices & updates','Admission announcements, schedules, exams and important coaching updates.'],
   admission: ['Admission preparation','Focused university, medical, engineering and GST admission programs.'],
 };
-const faqs = [['How do I join a live class?','Log in, open Live & Recorded Classes, and select Join when the class begins.'],['Can I watch a missed class?','Yes. Recordings appear in your course when the teacher publishes them.'],['How do online exams work?','Open Online Exams, start an available exam, answer within the timer and submit for results.'],['Can guardians see progress?','A linked guardian can view attendance, results, routine, notices and complaints.']];
+const faqs = [['How do I join a live class?','Log in, open Live & Recorded Classes, and select Join when the class begins.'],['Can I watch a missed class?','Yes. Recordings appear in your course when the teacher publishes them.'],['How do online exams work?','Open Online Exams, start an available exam, answer within the timer and submit for results.'],['Can guardians see progress?','A linked guardian can view course progress, results, routine, notices and complaints.']];
 
 export function PublicPage({ type }) {
   const { level } = useParams(); const [items,setItems]=useState([]); const title = type==='class' ? `Class ${level}` : copy[type]?.[0]; const description = type==='class' ? `Complete academic support for Class ${level}, organized by course, subject and chapter.` : copy[type]?.[1];

@@ -19,7 +19,6 @@ LateGenues now includes the application-owned implementation for every module in
 - Users and detailed profiles
 - Courses, subjects, batches, enrollment and progress
 - Live/recorded classes, materials, books, downloadable permissions and routines
-- Attendance records with student/guardian-readable reporting
 - Admin-manageable settings, notices, notifications and contact/social fields
 
 ## Learning
@@ -34,12 +33,12 @@ LateGenues now includes the application-owned implementation for every module in
 - MCQ, true/false, short and written question schemas
 - Timed exam interface, question navigation, saved answers, review markers and auto-submit
 - Automated objective scoring, negative marking, results and history
-- Student/guardian analytics endpoint for exam average, attendance and completion
+- Student/guardian analytics endpoint for exam average and course completion
 
 ## Communication and finance
 
 - Guardian complaints with full status workflow and history
-- Role/user-targeted notifications
+- Course-enrollment-targeted notifications
 - Payment, transaction, invoice, subscription status and expiry records
 - bKash, Nagad and card-ready method fields; a real merchant checkout requires provider credentials
 

@@ -39,6 +39,7 @@ function App() {
       <Route path="login" element={<Login />} />
       <Route path="register" element={<Register />} />
       <Route path="dashboard" element={<Protected><Dashboard /></Protected>} />
+      <Route path="dashboard/attendance" element={<Navigate to="/dashboard" replace />} />
       <Route path="dashboard/:module" element={<Protected><ModulePage /></Protected>} />
       <Route path="profile" element={<Protected><Profile /></Protected>} />
       <Route path="course/:id" element={<Protected><CourseRoom /></Protected>} />

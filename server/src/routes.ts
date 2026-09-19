@@ -6,7 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { allow, optionalAuth, requireAuth, signToken } from './auth.js';
-import { Attendance, Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from './models.js';
+import { Batch, Chapter, Complaint, Content, Course, Enrollment, Exam, ExamAttempt, Notebook, Notification, Payment, QA, Routine, Setting, Subject, User } from './models.js';
 import { lms, refreshCourseProgress } from './lms.js';
 import { activeEnrollment, deliverCourseUpdate } from './notifications.js';
 
@@ -330,7 +330,6 @@ const resources: Record<string, { model: any; write: string[] }> = {
   batches: { model: Batch, write: ['admin'] },
   enrollments: { model: Enrollment, write: ['admin'] },
   routines: { model: Routine, write: ['admin', 'teacher'] },
-  attendance: { model: Attendance, write: ['admin', 'teacher'] },
   notebooks: { model: Notebook, write: ['admin', 'teacher'] },
   payments: { model: Payment, write: ['admin'] },
 };
@@ -338,7 +337,7 @@ Object.entries(resources).forEach(([name, resource]) => {
   api.get(`/${name}`, requireAuth, async (req, res) => {
     const query: any = {};
     const subjectStudent = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
-    if (['attendance', 'payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
+    if (['payments', 'enrollments'].includes(name) && ['student', 'guardian'].includes(req.user.role)) query.student = subjectStudent;
     if (['routines', 'notebooks'].includes(name) && ['student', 'guardian'].includes(req.user.role)) { query.course = { $in: await enrolledCourseIds(req.user) }; query.$or = await studentBatchScope(req.user); if (name === 'notebooks') query.status = { $in: ['live', 'saved'] }; }
     if (['routines', 'notebooks'].includes(name) && req.user.role === 'teacher') { query.course = { $in: await managedCourseIds(req.user) }; query.$or = await teacherBatchScope(req.user); }
     let cursor = resource.model.find(query).sort({ createdAt: -1 });
@@ -347,7 +346,7 @@ Object.entries(resources).forEach(([name, resource]) => {
   });
   api.post(`/${name}`, requireAuth, allow(...resource.write), async (req, res) => {
     if (name === 'notebooks' && (!await validCourseLinks(req.body) || !await canManageBatch(req.user, req.body.course, req.body.batch))) return res.status(403).json({ message: 'Course assignment invalid' });
-    const created = await resource.model.create({ ...req.body, ...(name === 'attendance' ? { markedBy: req.user.id } : {}), ...(name === 'notebooks' ? { teacher: req.user.id } : {}) });
+    const created = await resource.model.create({ ...req.body, ...(name === 'notebooks' ? { teacher: req.user.id } : {}) });
     if (name === 'notebooks' && ['live', 'saved'].includes(created.status)) await deliverCourseUpdate({ course: created.course, batch: created.batch, type: 'NOTEBOOK', title: 'New live notebook', message: created.title, relatedContent: created.id, url: '/notebook/' + created.id });
     res.status(201).json(created);
   });
@@ -368,16 +367,16 @@ Object.entries(resources).forEach(([name, resource]) => {
     }
     res.json(updated);
   });
-  api.delete(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => { const record = await resource.model.findById(req.params.id); if (!record) return res.status(404).json({ message: 'Resource not found' }); if (name === 'notebooks' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); if (req.user.role === 'teacher' && name !== 'notebooks' && name !== 'routines' && name !== 'attendance') return res.status(403).json({ message: 'Not permitted' }); if (req.user.role === 'teacher' && name === 'routines' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); if (req.user.role === 'teacher' && name === 'attendance' && String(record.markedBy) !== String(req.user.id)) return res.status(403).json({ message: 'Not permitted' }); await record.deleteOne(); res.status(204).end(); });
+  api.delete(`/${name}/:id`, requireAuth, allow(...resource.write), async (req, res) => { const record = await resource.model.findById(req.params.id); if (!record) return res.status(404).json({ message: 'Resource not found' }); if (name === 'notebooks' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); if (req.user.role === 'teacher' && name !== 'notebooks' && name !== 'routines') return res.status(403).json({ message: 'Not permitted' }); if (req.user.role === 'teacher' && name === 'routines' && !await canManageBatch(req.user, record.course, record.batch)) return res.status(403).json({ message: 'Course assignment invalid' }); await record.deleteOne(); res.status(204).end(); });
 });
 
 api.post('/enrollments/:id/progress', requireAuth, allow('student'), (_req, res) => res.status(410).json({ message: 'Course progress is calculated from completed lessons and exams' }));
 api.get('/analytics/me', requireAuth, async (req, res) => {
   const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
-  const [results, attendance, enrollments] = await Promise.all([ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student, ...activeEnrollment() })]);
+  const [results, enrollments] = await Promise.all([ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Enrollment.find({ student, ...activeEnrollment() })]);
   const average = results.length ? Math.round(results.reduce((sum, item) => sum + item.percentage, 0) / results.length) : 0;
-  const present = attendance.filter((item) => item.status === 'present').length;
-  res.json({ average, exams: results.length, attendance: attendance.length ? Math.round((present / attendance.length) * 100) : 0, courseProgress: enrollments.length ? Math.round(enrollments.reduce((sum, item) => sum + item.progress, 0) / enrollments.length) : 0 });
+  const freshProgress = await Promise.all(enrollments.map(item => refreshCourseProgress(String(student), String(item.course))));
+  res.json({ average, exams: results.length, courseProgress: freshProgress.length ? Math.round(freshProgress.reduce((sum, value) => sum + value, 0) / freshProgress.length) : 0 });
 });
 
 api.get('/settings/public', async (_req, res) => res.json(Object.fromEntries((await Setting.find({})).map((s) => [s.key, s.value]))));
@@ -411,12 +410,12 @@ api.get('/dashboard', requireAuth, async (req, res) => {
   if (['student', 'guardian'].includes(req.user.role)) {
     const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
     const courseIds = await enrolledCourseIds(req.user);
-    const [results, attendanceRows, enrollments, upcoming] = await Promise.all([
-      ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Attendance.find({ student }), Enrollment.find({ student, ...activeEnrollment() }),
+    const [results, enrollments, upcoming] = await Promise.all([
+      ExamAttempt.find({ student, status: { $ne: 'in-progress' } }), Enrollment.find({ student, ...activeEnrollment() }),
       Content.find({ type: 'live-class', course: { $in: courseIds }, $or: await studentBatchScope(req.user), published: true, startsAt: { $gte: new Date() } }).sort({ startsAt: 1 }).limit(3).populate('teacher', 'name'),
     ]);
-    const present = attendanceRows.filter(x => x.status === 'present').length;
-    response.student = { courseProgress: enrollments.length ? Math.round(enrollments.reduce((s,x)=>s+x.progress,0)/enrollments.length) : 0, examsCompleted: results.length, attendance: attendanceRows.length ? Math.round((present/attendanceRows.length)*100) : 0, upcoming };
+    const freshProgress = await Promise.all(enrollments.map(item => refreshCourseProgress(String(student), String(item.course))));
+    response.student = { courseProgress: freshProgress.length ? Math.round(freshProgress.reduce((sum, value) => sum + value, 0) / freshProgress.length) : 0, examsCompleted: results.length, activeCourses: enrollments.length, upcoming };
   }
   res.json(response);
 });

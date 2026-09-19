@@ -8,7 +8,7 @@ const features: [LucideIcon,string,string][] = [
   [BookOpen, 'Digital materials', 'Lecture sheets, notebooks and course books in one place.'],
   [ClipboardCheck, 'Online exams', 'Timed model tests with instant results and progress insights.'],
   [MessageCircleQuestion, 'Teacher Q&A', 'Ask course-specific questions and get focused answers.'],
-  [Users, 'Guardian connection', 'Attendance, results, notices and support for guardians.'],
+  [Users, 'Guardian connection', 'Course progress, results, notices and support for guardians.'],
   [Award, 'Progress that shows', 'Track completion, strengths and areas that need improvement.'],
 ];
 

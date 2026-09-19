@@ -16,7 +16,6 @@ const config = {
   qa:{name:'Teacher Q&A',endpoint:'/qa',write:'/qa',fields:[['question','Your question'],['course','Course database ID'],['subject','Subject'],['chapter','Chapter'],['attachment','Attachment URL']]},
   complaints:{name:'Complaints',endpoint:'/complaints',write:'/complaints',fields:[['subject','Subject'],['category','Category'],['message','Message']]},
   notices:{name:'Notices',endpoint:'/content?type=notice',write:'/content',defaults:{type:'notice'},fields:[['title','Notice title'],['description','Details']]},
-  attendance:{name:'Attendance',endpoint:'/attendance',write:'/attendance',fields:[['student','Student ID'],['date','Date','date'],['status','Status']]},
   routines:{name:'Class routine',endpoint:'/routines',write:'/routines',fields:[['day','Day'],['course','Course database ID'],['subject','Subject'],['startsAt','Start time','time'],['endsAt','End time','time'],['type','Type']]},
   routine:{name:'Class routine',endpoint:'/routines',write:'/routines',fields:[]},
   notebooks:{name:'Live notebooks',endpoint:'/notebooks',write:'/notebooks',fields:[['title','Notebook title'],['course','Course database ID'],['subject','Subject'],['chapter','Chapter'],['content','Initial notes']]},
@@ -29,7 +28,7 @@ const config = {
 
 export function ModulePage(){
   const{module}=useParams();const{user}=useAuth();const c=config[module]||config.courses;const[items,setItems]=useState([]);const[search,setSearch]=useState('');const[show,setShow]=useState(false);const[form,setForm]=useState(c.defaults||{});const[error,setError]=useState('');const[loading,setLoading]=useState(true);const[uploading,setUploading]=useState(false);
-  const canWrite=user.role==='admin'||(user.role==='teacher'&&['classes','materials','exams','attendance','routines','notebooks','notifications'].includes(module))||(user.role==='student'&&['qa','complaints'].includes(module))||(user.role==='guardian'&&module==='complaints');
+  const canWrite=user.role==='admin'||(user.role==='teacher'&&['classes','materials','exams','routines','notebooks','notifications'].includes(module))||(user.role==='student'&&['qa','complaints'].includes(module))||(user.role==='guardian'&&module==='complaints');
   async function load(){setLoading(true);setError('');try{const endpoint=module==='courses'&&['student','guardian'].includes(user.role)?'/courses?mine=true':c.endpoint;const data=await api(endpoint);setItems(Array.isArray(data)?data:[data]);}catch(e){setError(e.message)}finally{setLoading(false)}}useEffect(()=>{setForm(c.defaults||{});load()},[module]);
   async function create(e){e.preventDefault();try{const payload={...form};if(module==='exams'&&payload.questionsJson){payload.questions=JSON.parse(payload.questionsJson);delete payload.questionsJson}if(module==='settings'){await api(`/settings/${form.key}`,{method:'PUT',body:JSON.stringify({value:form.value})})}else await api(c.write,{method:'POST',body:JSON.stringify(payload)});setShow(false);setForm(c.defaults||{});load()}catch(e){setError(e.message)}}
   async function remove(id){if(!confirm('Remove this item?'))return;await api(`${c.write}/${id}`,{method:'DELETE'});load()}

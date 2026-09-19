@@ -1,4 +1,4 @@
-import { ArrowUpRight, BookOpen, CalendarDays, CheckCircle2, ClipboardCheck, Clock3, GraduationCap, MessageSquareWarning, PlayCircle, TrendingUp, Users } from 'lucide-react';
+import { ArrowUpRight, BookOpen, CalendarDays, ClipboardCheck, Clock3, GraduationCap, MessageSquareWarning, PlayCircle, TrendingUp, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
@@ -6,9 +6,9 @@ import { useAuth } from '../auth-context';
 import { DashboardSidebar } from '../ui/DashboardSidebar';
 
 export function Dashboard() {
-  const { user } = useAuth(); const [stats,setStats]=useState({ students:0,teachers:0,courses:0,classes:0,exams:0,pending:0,student:{courseProgress:0,examsCompleted:0,attendance:0,upcoming:[] as any[]} });
+  const { user } = useAuth(); const [stats,setStats]=useState({ students:0,teachers:0,courses:0,classes:0,exams:0,pending:0,student:{courseProgress:0,examsCompleted:0,activeCourses:0,upcoming:[] as any[]} });
   useEffect(()=>{api('/dashboard').then(setStats).catch(()=>{});},[]);
-  const studentStats = [{label:'Course progress',value:`${stats.student?.courseProgress||0}%`,icon:TrendingUp},{label:'Upcoming classes',value:String(stats.student?.upcoming?.length||0).padStart(2,'0'),icon:PlayCircle},{label:'Exams completed',value:String(stats.student?.examsCompleted||0).padStart(2,'0'),icon:ClipboardCheck},{label:'Attendance',value:`${stats.student?.attendance||0}%`,icon:CheckCircle2}];
+  const studentStats = [{label:'Course progress',value:`${stats.student?.courseProgress||0}%`,icon:TrendingUp},{label:'Upcoming classes',value:String(stats.student?.upcoming?.length||0).padStart(2,'0'),icon:PlayCircle},{label:'Exams completed',value:String(stats.student?.examsCompleted||0).padStart(2,'0'),icon:ClipboardCheck},{label:'My courses',value:String(stats.student?.activeCourses||0).padStart(2,'0'),icon:BookOpen}];
   const adminStats = [{label:'Total students',value:stats.students,icon:GraduationCap},{label:'Active courses',value:stats.courses,icon:BookOpen},{label:'Teachers',value:stats.teachers,icon:Users},{label:'Open complaints',value:stats.pending,icon:MessageSquareWarning}];
   const staffStats = [{label:'Active courses',value:stats.courses,icon:BookOpen},{label:'Classes',value:stats.classes,icon:PlayCircle},{label:'Exams',value:stats.exams,icon:ClipboardCheck},{label:'Students',value:stats.students,icon:GraduationCap}];
   const displayStats = user.role==='admin'?adminStats:user.role==='teacher'?staffStats:studentStats;

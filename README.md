@@ -7,7 +7,7 @@ A full-stack TypeScript MERN coaching management and online learning platform fo
 - Public marketing website and course catalogue
 - Role-based Admin, Teacher, Student and Guardian dashboards
 - Courses, batches, live/recorded classes, materials and PDF books
-- Exams, results, attendance, Q&A, complaints and notices
+- Exams, results, Q&A, complaints and notices
 - Batches, enrollment, routines, live notebooks, notifications and payments
 - Timed exam-taking, objective scoring and student/guardian analytics
 - Admin-manageable website settings and global learning-content search

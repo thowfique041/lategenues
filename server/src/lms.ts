@@ -2,7 +2,7 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { Attendance, Batch, Chapter, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, QA, Subject, Notification } from './models.js';
+import { Batch, Chapter, Content, Course, Enrollment, Exam, ExamAttempt, LessonProgress, Notebook, QA, Subject, Notification } from './models.js';
 import { activeEnrollment } from './notifications.js';
 
 export const lms = Router();
@@ -36,12 +36,11 @@ export async function refreshCourseProgress(student: string, course: string) {
     Content.find({ course, type: { $in: ['live-class', 'recording', 'material', 'book'] }, published: true, ...batch }).select('_id'),
     Exam.find({ course, published: true, ...batch }).select('_id'),
   ]);
-  const [doneContentRows, attended, doneExams] = await Promise.all([
+  const [doneContentRows, doneExams] = await Promise.all([
     LessonProgress.find({ student, course, content: { $in: content.map(x => x.id) }, completed: true }).select('content'),
-    Attendance.find({ student, content: { $in: content.map(x => x.id) }, status: 'present' }).select('content'),
     ExamAttempt.distinct('exam', { student, exam: { $in: exams.map(x => x.id) }, status: { $in: ['submitted', 'reviewed'] } }),
   ]);
-  const doneContent = new Set([...doneContentRows, ...attended].map(x => String(x.content))).size;
+  const doneContent = new Set(doneContentRows.map(x => String(x.content))).size;
   const total = content.length + exams.length;
   const percentage = total ? Math.round((doneContent + doneExams.length) / total * 100) : 0;
   await Enrollment.updateOne({ _id: enrollment.id }, { progress: percentage });
@@ -66,13 +65,12 @@ lms.get('/courses/:courseId/room', requireAuth, async (req, res) => {
   ]);
   const student = req.user.role === 'guardian' ? req.user.guardianOf : req.user.id;
   const classEnrollments = access.enrollment ? [] : await Enrollment.find({ course: courseId, ...(access.batchIds ? { batch: { $in: access.batchIds } } : {}), ...activeEnrollment() }).populate('student', 'name').select('student progress lastActivity').sort({ lastActivity: -1 });
-  const [lessonProgress, attempts, attendance] = access.enrollment ? await Promise.all([
+  const [lessonProgress, attempts] = access.enrollment ? await Promise.all([
     LessonProgress.find({ student, course: courseId }),
     ExamAttempt.find({ student, exam: { $in: exams.map(x => x.id) }, status: { $in: ['submitted', 'reviewed'] } }).populate('exam', 'title subject subjectId chapterId totalMarks passMarks'),
-    Attendance.find({ student, content: { $in: content.filter(x => x.type === 'live-class').map(x => x.id) } }),
-  ]) : [[], await ExamAttempt.find({ exam: { $in: exams.map(x => x.id) }, status: { $in: ['submitted', 'reviewed'] } }).populate('exam', 'title subject subjectId chapterId totalMarks passMarks').populate('student', 'name').sort({ submittedAt: -1 }), []];
+  ]) : [[], await ExamAttempt.find({ exam: { $in: exams.map(x => x.id) }, status: { $in: ['submitted', 'reviewed'] } }).populate('exam', 'title subject subjectId chapterId totalMarks passMarks').populate('student', 'name').sort({ submittedAt: -1 })];
   const eligibleContent = content.filter(x => ['recording', 'material', 'book', 'live-class'].includes(x.type));
-  const completed = new Set([...lessonProgress.filter(x => x.completed).map(x => String(x.content)), ...attendance.filter(x => x.status === 'present').map(x => String(x.content))]);
+  const completed = new Set(lessonProgress.filter(x => x.completed).map(x => String(x.content)));
   const examDone = new Set(attempts.map(x => String(x.exam?._id || x.exam)));
   const done = eligibleContent.filter(x => completed.has(String(x.id))).length + examDone.size;
   const total = eligibleContent.length + exams.length;
@@ -88,7 +86,7 @@ lms.get('/courses/:courseId/room', requireAuth, async (req, res) => {
     return { chapterId: chapter.id, completed: complete, total: count, percentage: count ? Math.round(complete / count * 100) : 0 };
   });
   const updates = access.enrollment ? await Notification.find({ user: student, course: courseId, ...batchFilter(access) }).sort({ createdAt: -1 }).limit(12) : [];
-  res.json({ course: access.course, enrollment: access.enrollment, updates, classEnrollments, batches, subjects, chapters, content, notebooks, exams, qa, lessonProgress, attempts, attendance, progress: { overall, completed: done, total, chapterProgress, continueContent, positionSeconds: recent?.positionSeconds || 0 } });
+  res.json({ course: access.course, enrollment: access.enrollment, updates, classEnrollments, batches, subjects, chapters, content, notebooks, exams, qa, lessonProgress, attempts, progress: { overall, completed: done, total, chapterProgress, continueContent, positionSeconds: recent?.positionSeconds || 0 } });
 });
 
 lms.post('/courses/:courseId/subjects', requireAuth, async (req, res) => {

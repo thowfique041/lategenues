@@ -148,15 +148,6 @@ const routineSchema = new Schema({
   type: { type: String, enum: ['live', 'recorded', 'offline', 'exam'], default: 'live' },
 }, options);
 
-const attendanceSchema = new Schema({
-  student: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
-  content: { type: Schema.Types.ObjectId, ref: 'Content' },
-  date: { type: Date, default: Date.now },
-  status: { type: String, enum: ['present', 'absent', 'late'], required: true },
-  markedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-}, options);
-
 const qaSchema = new Schema({
   student: { type: Schema.Types.ObjectId, ref: 'User' },
   teacher: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -224,7 +215,6 @@ export const Exam = model('Exam', examSchema);
 export const ExamAttempt = model('ExamAttempt', examAttemptSchema);
 export const Notebook = model('Notebook', notebookSchema);
 export const Routine = model('Routine', routineSchema);
-export const Attendance = model('Attendance', attendanceSchema);
 export const QA = model('QA', qaSchema);
 export const Complaint = model('Complaint', complaintSchema);
 export const Notification = model('Notification', notificationSchema);
