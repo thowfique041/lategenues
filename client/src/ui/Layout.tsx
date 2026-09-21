@@ -1,6 +1,6 @@
 import { BookOpen, Menu, UserRound, X } from 'lucide-react';
-import { useState } from 'react';
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 import { NotificationBell } from './NotificationBell';
 
@@ -11,11 +11,18 @@ export function Logo() {
 export function Layout() {
   const [open, setOpen] = useState(false);
   const { user, logout } = useAuth();
+  const { pathname } = useLocation();
+  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    document.body.classList.toggle('mobile-nav-open', open);
+    return () => document.body.classList.remove('mobile-nav-open');
+  }, [open]);
   return <>
     <header className="site-header"><div className="container nav-wrap">
       <Logo />
-      <button className="menu-button" onClick={() => setOpen(!open)} aria-label="Toggle menu">{open ? <X/> : <Menu/>}</button>
-      <nav className={open ? 'nav open' : 'nav'} onClick={() => setOpen(false)}>
+      <button className="menu-button" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="main-navigation">{open ? <X/> : <Menu/>}</button>
+      {open && <button className="nav-backdrop" aria-label="Close menu" onClick={() => setOpen(false)}/>}
+      <nav id="main-navigation" className={open ? 'nav open' : 'nav'} onClick={() => setOpen(false)}>
         <NavLink to="/">Home</NavLink><NavLink to="/courses">Courses</NavLink><NavLink to="/admission">Admission</NavLink>
         <NavLink to="/teachers">Teachers</NavLink><NavLink to="/about">About</NavLink><NavLink to="/contact">Contact</NavLink>
         {user ? <><NavLink className="btn btn-small" to="/dashboard">Dashboard</NavLink>{user.role === 'student' && <NotificationBell/>}<NavLink className="profile-link" to="/profile"><UserRound/><span>{user.name}</span></NavLink><button className="link-button" onClick={logout}>Log out</button></> : <NavLink className="btn btn-small" to="/login">Sign in</NavLink>}

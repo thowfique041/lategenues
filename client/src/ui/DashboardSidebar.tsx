@@ -1,5 +1,5 @@
 import { BookOpen, CalendarDays, CircleHelp, ClipboardCheck, FileText, MessageSquareWarning, PanelLeftClose, PanelLeftOpen, PlayCircle, TrendingUp, Users } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 
@@ -12,10 +12,13 @@ const roleMenus = {
 
 export function DashboardSidebar() {
   const { user } = useAuth(); const { pathname } = useLocation();
-  const [open, setOpen] = useState(() => localStorage.getItem('lg_sidebar') !== 'closed');
+  const [open, setOpen] = useState(() => window.matchMedia('(min-width: 901px)').matches && localStorage.getItem('lg_sidebar') !== 'closed');
   const menus = roleMenus[user.role] || roleMenus.student;
   function toggle(){const next=!open;setOpen(next);localStorage.setItem('lg_sidebar',next?'open':'closed')}
-  return <><button className={'sidebar-toggle '+(open?'is-open':'')} onClick={toggle} aria-label={open?'Close sidebar':'Open sidebar'} title={open?'Close sidebar':'Open sidebar'}>{open?<PanelLeftClose/>:<PanelLeftOpen/>}</button>
-    <aside className={'dash-side '+(open?'open':'collapsed')}><div><small>WORKSPACE</small>{menus.map(([path,label,Icon])=>{const href=`/dashboard/${path}`;return <Link className={pathname===href?'active':''} to={href} key={path}><Icon/>{label}</Link>})}</div><div className="support-card"><CircleHelp/><b>Need help?</b><p>Our support team is ready.</p><a href="mailto:hello@lategenues.com">Contact support</a></div></aside>
+  useEffect(()=>{if(window.matchMedia('(max-width: 900px)').matches)setOpen(false)},[pathname]);
+  useEffect(()=>{document.body.classList.toggle('dashboard-drawer-open',open&&window.matchMedia('(max-width: 900px)').matches);return()=>document.body.classList.remove('dashboard-drawer-open')},[open]);
+  return <><button className={'sidebar-toggle '+(open?'is-open':'')} onClick={toggle} aria-expanded={open} aria-controls="dashboard-navigation" aria-label={open?'Close sidebar':'Open sidebar'} title={open?'Close sidebar':'Open sidebar'}>{open?<PanelLeftClose/>:<PanelLeftOpen/>}</button>
+    {open&&<button className="sidebar-backdrop" aria-label="Close sidebar" onClick={()=>setOpen(false)}/>}
+    <aside id="dashboard-navigation" className={'dash-side '+(open?'open':'collapsed')}><div><small>WORKSPACE</small>{menus.map(([path,label,Icon])=>{const href=`/dashboard/${path}`;return <Link className={pathname===href?'active':''} to={href} key={path}><Icon/>{label}</Link>})}</div><div className="support-card"><CircleHelp/><b>Need help?</b><p>Our support team is ready.</p><a href="mailto:hello@lategenues.com">Contact support</a></div></aside>
   </>;
 }
